@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:io' show exit;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -157,6 +157,7 @@ class Shell extends StatelessWidget {
           final nav = navKey.currentState;
           if (nav != null && nav.canPop()) { nav.pop(); return; }
           await SystemNavigator.pop();
+          Future.delayed(const Duration(milliseconds: 300), () => exit(0));
         },
         child: Scaffold(
           body: SafeArea(
@@ -219,16 +220,10 @@ class TopBar extends StatelessWidget {
             NavBtn(dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
                 dark ? 'Светлая тема' : 'Тёмная тема',
                 () => ThemeCtrl.instance.toggle()),
-            NavBtn(Icons.close_rounded, 'Выход',
-                () async {
-                  await SystemNavigator.pop();
-                  // Если SystemNavigator не закрыл приложение — закрываем принудительно
-                  Future.delayed(const Duration(milliseconds: 500), () {
-                    if (mounted) {
-                      exit(0);
-                    }
-                  });
-                }, danger: true),
+            NavBtn(Icons.close_rounded, 'Выход', () {
+              SystemNavigator.pop();
+              Future.delayed(const Duration(milliseconds: 300), () => exit(0));
+            }, danger: true),
           ]);
         },
       ),

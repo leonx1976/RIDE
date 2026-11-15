@@ -31,57 +31,15 @@ class _WebPageState extends State<WebPage> {
     super.initState();
     _overlay = widget.args.waitReady;
 
-    if (widget.args.waitReady) {
-      Future.delayed(const Duration(seconds: 10), () {
-        if (mounted) setState(() => _overlay = false);
-      });
-    }
-
     c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
-      ..addJavaScriptChannel(
-        'FamilyBox',
-        onMessageReceived: (JavaScriptMessage message) {
-          if (message.message == 'ready' && mounted) {
-            setState(() => _overlay = false);
-          }
-        },
-      )
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (v) => setState(() => p = v / 100),
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
           if (widget.args.clean) {
-            try {
-              await c.runJavaScript('''
-                document.getElementById('cookieAcceptBtn')?.click();
-                ['header','footer','.loader-wrapper','.cookie-banner','.breadcrumb','nav','.navbar']
-                  .forEach(s => document.querySelectorAll(s).forEach(e => e.remove()));
-
-                const pay = document.getElementById('tk-pay');
-                if (pay) {
-                  let node = pay;
-                  while (node && node !== document.body) {
-                    const parent = node.parentElement;
-                    if (parent) {
-                      for (const sib of parent.children) {
-                        if (sib !== node) sib.style.display = 'none';
-                      }
-                    }
-                    node = parent;
-                  }
-                  const check = setInterval(() => {
-                    if (pay.querySelector('form, input, button')) {
-                      clearInterval(check);
-                      try { FamilyBox.postMessage('ready'); } catch (e) {}
-                    }
-                  }, 150);
-                } else {
-                  try { FamilyBox.postMessage('ready'); } catch (e) {}
-                }
-              ''');
-            } catch (_) {}
+            _waitFormReady();
           }
           WebNav.instance.refresh();
         },
@@ -98,6 +56,70 @@ class _WebPageState extends State<WebPage> {
       ))
       ..loadRequest(Uri.parse(widget.args.url));
     WebNav.instance.attach(c);
+  }
+
+  Future<void> _waitFormReady({int attempt = 0}) async {
+    if (!mounted) return;
+
+    // Максимум 60 попыток по 500 мс = 30 секунд
+    if (attempt > 60) {
+      if (mounted) setState(() => _overlay = false);
+      return;
+    }
+
+    try {
+      final hasForm = await c.runJavaScriptReturningResult('''
+        (function() {
+          var pay = document.getElementById('tk-pay');
+          if (pay && pay.querySelector('form, input, button')) {
+            return true;
+          }
+          return false;
+        })()
+      ''');
+
+      if (hasForm == true) {
+        // Форма появилась — убираем всё лишнее вокруг неё
+        await c.runJavaScript('''
+          // Кликаем кнопку куки, если есть
+          var cookieBtn = document.getElementById('cookieAcceptBtn');
+          if (cookieBtn) cookieBtn.click();
+          
+          // Удаляем шапку, футер, меню, баннеры
+          ['header','footer','.loader-wrapper','.cookie-banner','.breadcrumb','nav','.navbar','.menu','aside','h1','h5']
+            .forEach(function(s) {
+              document.querySelectorAll(s).forEach(function(e) { e.remove(); });
+            });
+          
+          // Скрываем все элементы вокруг формы, оставляем только её
+          var pay = document.getElementById('tk-pay');
+          if (pay) {
+            var node = pay;
+            while (node && node !== document.body) {
+              var parent = node.parentElement;
+              if (parent) {
+                for (var i = 0; i < parent.children.length; i++) {
+                  if (parent.children[i] !== node) {
+                    parent.children[i].style.display = 'none';
+                  }
+                }
+              }
+              node = parent;
+            }
+          }
+        ''');
+
+        if (mounted) setState(() => _overlay = false);
+        return;
+      }
+    } catch (e) {
+      // Игнорируем ошибки, пробуем дальше
+    }
+
+    // Повторяем проверку через 500 мс
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _waitFormReady(attempt: attempt + 1);
+    });
   }
 
   @override

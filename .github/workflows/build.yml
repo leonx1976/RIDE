@@ -35,17 +35,6 @@ jobs:
           fi
           flutter --version
 
-      - name: Поднять minSdk для геолокации
-        run: |
-          F=android/app/build.gradle.kts
-          if [ -f "$F" ]; then
-            sed -i -E 's/(minSdk\s*=\s*)[0-9]+/\121/' "$F"
-          fi
-          F2=android/app/build.gradle
-          if [ -f "$F2" ]; then
-            sed -i -E 's/(minSdk\s+)[0-9]+/\121/' "$F2"
-          fi
-
       - name: Совместимость с AGP 9 (built-in Kotlin)
         run: |
           printf '\nandroid.builtInKotlin=false\nandroid.newDsl=false\n' >> android/gradle.properties

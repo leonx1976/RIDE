@@ -11,6 +11,7 @@ const LatLng _kaluga = LatLng(54.5138, 36.2754);
 const String _tiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const String _nominatim = 'https://nominatim.openstreetmap.org/search';
 const String _valhalla = 'https://valhalla1.openstreetmap.de/route';
+const String _osrm = 'https://routing.openstreetmap.de/routed-foot/route/v1/driving';
 
 class NominatimPlace {
   NominatimPlace(this.name, this.point);
@@ -77,7 +78,7 @@ class _NaviPageState extends State<NaviPage> {
       if (mounted) setState(() => _locDenied = false);
 
       final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium);
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium));
       if (!mounted) return;
       setState(() => _me = LatLng(pos.latitude, pos.longitude));
       _map.move(_me!, 15);
@@ -161,11 +162,26 @@ class _NaviPageState extends State<NaviPage> {
       _distKm = null;
       _timeMin = null;
     });
+
+    // Пробуем Валгаллу, если не получилось — OSRM
+    var success = await _buildRouteValhalla(origin, _dest!);
+    if (!success) {
+      success = await _buildRouteOSRM(origin, _dest!);
+    }
+
+    if (!success && mounted) {
+      _snack('Не удалось построить маршрут', error: true);
+    }
+
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<bool> _buildRouteValhalla(LatLng origin, LatLng dest) async {
     try {
       final body = jsonEncode({
         'locations': [
           {'lat': origin.latitude, 'lon': origin.longitude},
-          {'lat': _dest!.latitude, 'lon': _dest!.longitude},
+          {'lat': dest.latitude, 'lon': dest.longitude},
         ],
         'costing': 'pedestrian',
         'directions_options': {'units': 'kilometers'},
@@ -177,7 +193,7 @@ class _NaviPageState extends State<NaviPage> {
                 'User-Agent': 'FamilyBox/1.0',
               },
               body: body)
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 20));
       if (r.statusCode == 200 && mounted) {
         final j = jsonDecode(r.body) as Map<String, dynamic>;
         final trip = j['trip'] as Map<String, dynamic>;
@@ -190,14 +206,40 @@ class _NaviPageState extends State<NaviPage> {
         _timeMin = sec != null ? sec / 60 : null;
         setState(() {});
         _fitRoute();
-      } else {
-        _snack('Не удалось построить маршрут', error: true);
+        return true;
       }
-    } catch (_) {
-      _snack('Ошибка сети при построении маршрута', error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> _buildRouteOSRM(LatLng origin, LatLng dest) async {
+    try {
+      final coords = '${origin.longitude},${origin.latitude};${dest.longitude},${dest.latitude}';
+      final uri = Uri.parse('$_osrm/$coords?overview=full&geometries=geojson&steps=false');
+      final r = await http
+          .get(uri, headers: {'User-Agent': 'FamilyBox/1.0'})
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode == 200 && mounted) {
+        final j = jsonDecode(r.body) as Map<String, dynamic>;
+        final routes = j['routes'] as List;
+        if (routes.isEmpty) return false;
+        final route = routes.first as Map<String, dynamic>;
+        final geometry = route['geometry'] as Map<String, dynamic>;
+        final coords = geometry['coordinates'] as List;
+        _route = coords.map((c) {
+          final p = c as List;
+          return LatLng((p[1] as num).toDouble(), (p[0] as num).toDouble());
+        }).toList();
+        final dist = (route['distance'] as num?)?.toDouble();
+        _distKm = dist != null ? dist / 1000 : null;
+        final dur = (route['duration'] as num?)?.toDouble();
+        _timeMin = dur != null ? dur / 60 : null;
+        setState(() {});
+        _fitRoute();
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   void _fitRoute() {

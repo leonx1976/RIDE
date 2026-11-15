@@ -77,7 +77,7 @@ class _NaviPageState extends State<NaviPage> {
       if (mounted) setState(() => _locDenied = false);
 
       final pos = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium));
+          desiredAccuracy: LocationAccuracy.medium);
       if (!mounted) return;
       setState(() => _me = LatLng(pos.latitude, pos.longitude));
       _map.move(_me!, 15);

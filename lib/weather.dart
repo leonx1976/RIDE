@@ -133,6 +133,49 @@ Future<Weather?> _fetchMetNo() async {
   }
 }
 
+Future<Weather?> _fetchWttrIn() async {
+  try {
+    final uri = Uri.parse('https://wttr.in/Kaluga?format=j1');
+    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.0'})
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) return null;
+    final j = jsonDecode(r.body) as Map<String, dynamic>;
+    
+    final current = (j['current_condition'] as List).first as Map<String, dynamic>;
+    final temp = double.parse(current['temp_C'] as String);
+    final feels = double.parse(current['FeelsLikeC'] as String);
+    final wind = double.parse(current['windspeedKmph'] as String);
+    final desc = (current['weatherDesc'] as List).first as Map<String, dynamic>;
+    final code = _weatherDescToCode(desc['value'] as String);
+    
+    final days = <DayFx>[];
+    final weather = j['weather'] as List;
+    for (var i = 0; i < weather.length && i < 4; i++) {
+      final day = weather[i] as Map<String, dynamic>;
+      final date = DateTime.parse(day['date'] as String);
+      final tmax = double.parse(day['maxtempC'] as String);
+      final tmin = double.parse(day['mintempC'] as String);
+      days.add(DayFx(date, 3, tmax, tmin, 0));
+    }
+    
+    if (days.isEmpty) return null;
+    return Weather(temp, feels, wind, code, days, DateTime.now(), false);
+  } catch (_) {
+    return null;
+  }
+}
+
+int _weatherDescToCode(String desc) {
+  final d = desc.toLowerCase();
+  if (d.contains('sun') || d.contains('clear')) return 0;
+  if (d.contains('cloud')) return 3;
+  if (d.contains('rain')) return 61;
+  if (d.contains('snow')) return 71;
+  if (d.contains('fog')) return 45;
+  if (d.contains('thunder')) return 95;
+  return 3;
+}
+
 Future<Weather> loadWeather({bool force = false}) async {
   final p = await SharedPreferences.getInstance();
   String? body = p.getString('wx');
@@ -144,6 +187,8 @@ Future<Weather> loadWeather({bool force = false}) async {
   if (force || body == null || age > 30 * 60 * 1000) {
     var w = await _fetchOpenMeteo();
     w ??= await _fetchMetNo();
+    w ??= await _fetchWttrIn();
+    
     if (w != null) {
       body = jsonEncode({
         'temp': w.temp, 'feels': w.feels, 'wind': w.wind, 'code': w.code,

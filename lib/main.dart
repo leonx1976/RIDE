@@ -219,7 +219,15 @@ class TopBar extends StatelessWidget {
                 dark ? 'Светлая тема' : 'Тёмная тема',
                 () => ThemeCtrl.instance.toggle()),
             NavBtn(Icons.close_rounded, 'Выход',
-                () => SystemNavigator.pop(), danger: true),
+                () async {
+                  await SystemNavigator.pop();
+                  // Если SystemNavigator не закрыл приложение — закрываем принудительно
+                  Future.delayed(const Duration(milliseconds: 500), () {
+                    if (mounted) {
+                      exit(0);
+                    }
+                  });
+                }, danger: true),
           ]);
         },
       ),

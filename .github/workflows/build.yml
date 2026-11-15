@@ -1,0 +1,87 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+    steps:
+      - name: Код
+        uses: actions/checkout@v4
+
+      - name: Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Достроить android/, если он неполный
+        run: |
+          if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
+            flutter create --platforms=android --org ru.family --project-name family_box /tmp/scaffold
+            mkdir -p android
+            cp -rn /tmp/scaffold/android/. ./android/
+          fi
+          flutter --version
+
+      - name: Поднять minSdk для геолокации
+        run: |
+          F=android/app/build.gradle.kts
+          if [ -f "$F" ]; then
+            sed -i -E 's/(minSdk\s*=\s*)[0-9]+/\121/' "$F"
+          fi
+          F2=android/app/build.gradle
+          if [ -f "$F2" ]; then
+            sed -i -E 's/(minSdk\s+)[0-9]+/\121/' "$F2"
+          fi
+
+      - name: Совместимость с AGP 9 (built-in Kotlin)
+        run: |
+          printf '\nandroid.builtInKotlin=false\nandroid.newDsl=false\n' >> android/gradle.properties
+          cat android/gradle.properties
+
+      - name: Зависимости
+        run: flutter pub get
+
+      - name: Сборка
+        run: flutter build apk --release --split-per-abi
+
+      - name: Подпись и раскладка
+        run: |
+          mkdir -p dist
+          SRC=build/app/outputs/flutter-apk
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/key.jks"
+            BT=$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)
+            for f in "$SRC"/*.apk; do
+              base=$(basename "$f" .apk)
+              "$BT/zipalign" -f -p 4 "$f" "$RUNNER_TEMP/$base-aligned.apk"
+              "$BT/apksigner" sign \
+                --ks "$RUNNER_TEMP/key.jks" \
+                --ks-pass pass:"${{ secrets.STORE_PASSWORD }}" \
+                --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+                --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+                --out "dist/$base.apk" "$RUNNER_TEMP/$base-aligned.apk"
+            done
+          else
+            cp "$SRC"/*.apk dist/
+          fi
+          ls -lh dist
+
+      - name: Готовые APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: family-box-apk
+          path: dist/*.apk
+          retention-days: 30

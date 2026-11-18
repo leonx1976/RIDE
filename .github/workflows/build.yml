@@ -26,7 +26,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Достроить android/, если он неполный
+      - name: Достроить android, если неполный
         run: |
           if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
             flutter create --platforms=android --org ru.family --project-name family_box /tmp/scaffold
@@ -35,16 +35,22 @@ jobs:
           fi
           flutter --version
 
-      - name: Совместимость с AGP 9 (built-in Kotlin)
+      - name: Совместимость версий
         run: |
           printf '\nandroid.builtInKotlin=false\nandroid.newDsl=false\n' >> android/gradle.properties
-          cat android/gradle.properties
+          for F in android/app/build.gradle.kts android/app/build.gradle; do
+            [ -f "$F" ] || continue
+            sed -i -E 's/(minSdk[[:space:]]*=?[[:space:]]*)[0-9]+/\123/' "$F"
+            sed -i -E '/abiFilters/d' "$F"
+            sed -i -E '/ndk[[:space:]]*\{/,/\}/d' "$F"
+          done
+          grep -nE 'minSdk|targetSdk|compileSdk' android/app/build.gradle* || true
 
       - name: Зависимости
         run: flutter pub get
 
-      - name: Сборка
-        run: flutter build apk --release --split-per-abi
+      - name: Сборка универсального APK
+        run: flutter build apk --release --android-skip-build-dependency-validation
 
       - name: Подпись и раскладка
         run: |
@@ -53,7 +59,7 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/key.jks"
             BT=$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)
-            for f in "$SRC"/*.apk; do
+            for f in "$SRC"/app-release.apk; do
               base=$(basename "$f" .apk)
               "$BT/zipalign" -f -p 4 "$f" "$RUNNER_TEMP/$base-aligned.apk"
               "$BT/apksigner" sign \
@@ -61,16 +67,16 @@ jobs:
                 --ks-pass pass:"${{ secrets.STORE_PASSWORD }}" \
                 --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
                 --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
-                --out "dist/$base.apk" "$RUNNER_TEMP/$base-aligned.apk"
+                --out "dist/kaluga-universal.apk" "$RUNNER_TEMP/$base-aligned.apk"
             done
           else
-            cp "$SRC"/*.apk dist/
+            cp "$SRC"/app-release.apk dist/kaluga-universal.apk
           fi
           ls -lh dist
 
-      - name: Готовые APK
+      - name: Готовый APK
         uses: actions/upload-artifact@v4
         with:
-          name: family-box-apk
+          name: kaluga-universal-apk
           path: dist/*.apk
           retention-days: 30

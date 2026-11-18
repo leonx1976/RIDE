@@ -12,36 +12,49 @@ class WebArgs {
       {this.clean = false,
       this.waitReady = false,
       this.bare = false,
-      this.mapOnly = false});
+      this.mapOnly = false,
+      this.stripControls = false});
   final String url, title;
   final bool clean;
   final bool waitReady;
   final bool bare;
   final bool mapOnly;
+  final bool stripControls;
 }
 
-const String _isolateJs = r'''
+String _isoJs(bool strip) => '''
 (function(){
-  if (window.__fbIso) return;
-  function pick(){
-    var c = document.querySelector('canvas');
-    if (c && c.offsetWidth > 50 && c.offsetHeight > 50) return c;
-    var sels = ['[class*="map-container"]','[class*="map-view"]','[class*="ymaps"]',
-                '[id*="map"]','[class*="map"]'];
+  var STRIP = ${strip ? 'true' : 'false'};
+  function area(e){ try { return e.offsetWidth * e.offsetHeight; } catch(x){ return 0; } }
+  function need(){ return window.innerWidth * window.innerHeight * 0.30; }
+  function find(){
+    var sels = ['[class*="map-container"]','[class*="map-view"]','[class*="map__"]',
+                '[class*="ymaps"]','[id*="map"]','[class*="map"]'];
     for (var i=0;i<sels.length;i++){
-      var list = document.querySelectorAll(sels[i]);
-      for (var j=0;j<list.length;j++){
-        var e = list[j];
-        if (e.offsetWidth > 150 && e.offsetHeight > 150) return e;
-      }
+      var l = document.querySelectorAll(sels[i]);
+      for (var j=0;j<l.length;j++){ if (area(l[j]) >= need()) return l[j]; }
     }
+    var cs = document.querySelectorAll('canvas'), best = null, ba = 0;
+    for (var k=0;k<cs.length;k++){ var a = area(cs[k]); if (a > ba){ ba = a; best = cs[k]; } }
+    if (best && ba >= need()) return best.parentElement || best;
     return null;
   }
-  function hide(el){ try{ el.style.setProperty('display','none','important'); }catch(e){} }
-  function box(el,v){ try{ el.style.setProperty('width',v,'important');
-                           el.style.setProperty('height',v,'important'); }catch(e){} }
+  function hide(e){
+    if (!e || e.getAttribute('data-fbh')) return;
+    try { e.setAttribute('data-fbh','1'); e.style.setProperty('display','none','important'); } catch(x){}
+  }
+  function flat(e){
+    if (!e || e.getAttribute('data-fbf')) return;
+    try {
+      e.setAttribute('data-fbf','1');
+      e.style.setProperty('margin','0','important');
+      e.style.setProperty('padding','0','important');
+    } catch(x){}
+  }
+  function outside(e,m){ return e !== m && !e.contains(m) && !m.contains(e); }
+  function inside(e,m){ return e !== m && m.contains(e) && !e.querySelector('canvas'); }
   function run(){
-    var m = pick();
+    var m = find();
     if (!m) return;
     var node = m;
     while (node && node !== document.body && node !== document.documentElement){
@@ -51,41 +64,62 @@ const String _isolateJs = r'''
         var s = p.children[i];
         if (s !== node && !s.contains(m)) hide(s);
       }
-      try{
-        p.style.setProperty('margin','0','important');
-        p.style.setProperty('padding','0','important');
-        p.style.setProperty('max-width','none','important');
-        p.style.setProperty('max-height','none','important');
-        p.style.setProperty('min-height','100%','important');
-        box(p,'100%');
-      }catch(e){}
+      flat(p);
       node = p;
     }
-    var bad = ['advert','banner','promo','install','subscription','onboarding','popup',
-               'modal','cookie','notice','tooltip','zoom','controls','header','sidebar',
-               'footer','search','menu','button','btn','tabs','story','hint','disclaimer'];
-    bad.forEach(function(k){
-      document.querySelectorAll('[class*="'+k+'"]').forEach(function(e){
-        if (e !== m && !e.contains(m) && !e.querySelector('canvas')) hide(e);
+    var chrome = ['advert','banner','promo','install','subscription','onboarding','popup',
+                  'modal','cookie','notice','header','footer','sidebar','tabs','story',
+                  'disclaimer','share','social'];
+    chrome.forEach(function(k){
+      document.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
+        if (outside(e,m)) hide(e);
       });
     });
-    try{
-      var de = document.documentElement;
+    document.querySelectorAll('h1,h2').forEach(function(e){ if (outside(e,m)) hide(e); });
+    if (STRIP){
+      var ctrl = ['zoom','controls','control','button','btn','panel','tooltip','hint',
+                  'legend','attrib','copyright','search','menu','ruler','settings'];
+      ctrl.forEach(function(k){
+        document.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
+          if (inside(e,m)) hide(e);
+        });
+      });
+    }
+    try {
+      var de = document.documentElement, b = document.body;
       de.style.setProperty('margin','0','important');
       de.style.setProperty('overflow','hidden','important');
-      box(de,'100%');
-      var b = document.body;
       b.style.setProperty('margin','0','important');
       b.style.setProperty('padding','0','important');
       b.style.setProperty('overflow','hidden','important');
-      b.style.setProperty('background','#ffffff','important');
-      box(b,'100%');
-    }catch(e){}
-    if (m.tagName !== 'CANVAS') box(m,'100%');
-    try{ window.dispatchEvent(new Event('resize')); }catch(e){}
+    } catch(x){}
+    if (m.getAttribute('data-fbp') !== '1'){
+      try {
+        m.setAttribute('data-fbp','1');
+        m.style.setProperty('position','fixed','important');
+        m.style.setProperty('left','0','important');
+        m.style.setProperty('top','0','important');
+        m.style.setProperty('right','0','important');
+        m.style.setProperty('bottom','0','important');
+        m.style.setProperty('width','100%','important');
+        m.style.setProperty('height','100%','important');
+        m.style.setProperty('margin','0','important');
+        m.style.setProperty('z-index','1','important');
+      } catch(x){}
+      if (!window.__fbResized){
+        window.__fbResized = true;
+        try { window.dispatchEvent(new Event('resize')); } catch(x){}
+      }
+    }
   }
   run();
-  window.__fbIso = setInterval(run, 600);
+  if (window.__fbTimer) return;
+  var n = 0;
+  window.__fbTimer = setInterval(function(){
+    n++;
+    run();
+    if (n >= 14){ clearInterval(window.__fbTimer); window.__fbTimer = null; }
+  }, 450);
 })();
 ''';
 
@@ -112,7 +146,11 @@ class _WebPageState extends State<WebPage> {
         onProgress: (v) { if (mounted) setState(() => p = v / 100); },
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
-          if (widget.args.mapOnly) _isolate();
+          if (widget.args.mapOnly) {
+            try {
+              await c.runJavaScript(_isoJs(widget.args.stripControls));
+            } catch (_) {}
+          }
           if (widget.args.clean) _waitForm();
           WebNav.instance.refresh();
         },
@@ -129,15 +167,6 @@ class _WebPageState extends State<WebPage> {
       ))
       ..loadRequest(Uri.parse(widget.args.url));
     WebNav.instance.attach(c);
-  }
-
-  Future<void> _isolate() async {
-    for (var i = 0; i < 8; i++) {
-      try {
-        await c.runJavaScript(_isolateJs);
-      } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 500));
-    }
   }
 
   Future<void> _waitForm({int attempt = 0}) async {

@@ -31,26 +31,22 @@ jobs:
           mkdir -p ~/.gradle/init.d
           cat > ~/.gradle/init.d/repos.gradle <<'EOF'
           beforeSettings { settings ->
-              settings.pluginManagement.repositories {
-                  mavenCentral()
-                  google()
-                  gradlePluginPortal()
-              }
-              settings.dependencyResolutionManagement.repositories {
-                  mavenCentral()
-                  google()
-              }
+              try {
+                  settings.pluginManagement.repositories {
+                      mavenCentral()
+                      google()
+                      gradlePluginPortal()
+                  }
+              } catch (Throwable ignored) { }
           }
           allprojects { p ->
-              p.buildscript.repositories {
-                  mavenCentral()
-                  google()
-                  gradlePluginPortal()
-              }
-              p.repositories {
-                  mavenCentral()
-                  google()
-              }
+              try {
+                  p.buildscript.repositories {
+                      mavenCentral()
+                      google()
+                      gradlePluginPortal()
+                  }
+              } catch (Throwable ignored) { }
           }
           EOF
           cat ~/.gradle/init.d/repos.gradle

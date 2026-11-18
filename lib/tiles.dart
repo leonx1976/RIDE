@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -49,9 +50,9 @@ Uint8List? _blank;
 Future<Uint8List> blankPng() async {
   if (_blank != null) return _blank!;
   final rec = ui.PictureRecorder();
-  final canvas = Canvas(rec);
-  canvas.drawRect(const Rect.fromLTWH(0, 0, 256, 256),
-      Paint()..color = const Color(0x00000000));
+  final canvas = ui.Canvas(rec);
+  canvas.drawRect(const ui.Rect.fromLTWH(0, 0, 256, 256),
+      ui.Paint()..color = const ui.Color(0x00000000));
   final img = await rec.endRecording().toImage(256, 256);
   final bd = await img.toByteData(format: ui.ImageByteFormat.png);
   _blank = bd!.buffer.asUint8List();
@@ -71,7 +72,7 @@ class _TileImage extends ImageProvider<_TileImage> {
 
   @override
   Future<_TileImage> obtainKey(ImageConfiguration configuration) =>
-      SynchronousFuture(this);
+      SynchronousFuture<_TileImage>(this);
 
   @override
   ImageStreamCompleter loadImage(_TileImage key, ImageDecoderCallback decode) =>

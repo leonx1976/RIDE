@@ -301,7 +301,7 @@ class _NaviPageState extends State<NaviPage> {
             title: const Text('Офлайн-карта Калуги'),
             content: Column(mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Тайлов: $done из $total', style: context.t.bodyMedium),
+              Text('Файлов: $done из $total', style: context.t.bodyMedium),
               const SizedBox(height: 12),
               LinearProgressIndicator(value: total == 0 ? 0 : done / total),
               const SizedBox(height: 12),

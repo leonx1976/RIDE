@@ -96,6 +96,34 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
   return out;
 }
 
+String _shortName(String s) => s
+    .replaceAll('улица', 'ул.')
+    .replaceAll('Улица', 'ул.')
+    .replaceAll('проспект', 'пр-т')
+    .replaceAll('переулок', 'пер.')
+    .trim();
+
+Future<String?> _reverseName(LatLng p) async {
+  try {
+    final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse'
+        '?format=json&lat=${p.latitude}&lon=${p.longitude}&zoom=17&addressdetails=1');
+    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.1'})
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) return null;
+    final j = jsonDecode(r.body) as Map<String, dynamic>;
+    final a = (j['address'] as Map<String, dynamic>?) ?? {};
+    final road = (a['road'] ?? a['pedestrian'] ?? a['footway']) as String?;
+    final place = (a['neighbourhood'] ?? a['suburb'] ?? a['quarter'] ??
+        a['city_district']) as String?;
+    final other = (a['village'] ?? a['town'] ?? a['city']) as String?;
+    final pick = road ?? place ?? other;
+    if (pick == null || pick.isEmpty) return null;
+    return _shortName(pick);
+  } catch (_) {
+    return null;
+  }
+}
+
 int _kind(String name) {
   final n = name.toLowerCase();
   if (n.contains('троллейбус')) return 0;
@@ -275,6 +303,9 @@ class _RouteMapPageState extends State<RouteMapPage> {
   late Future<Map<int, Map<String, List<LatLng>>>> _f = loadPolylines();
   bool _showBack = true;
   bool _fitted = false;
+  bool _namesStarted = false;
+  String? _a;
+  String? _b;
 
   @override
   void initState() {
@@ -292,6 +323,48 @@ class _RouteMapPageState extends State<RouteMapPage> {
             padding: const EdgeInsets.all(40)));
       } catch (_) {}
     });
+  }
+
+  Future<void> _resolveNames(List<LatLng> direct) async {
+    if (_namesStarted || direct.length < 2) return;
+    _namesStarted = true;
+    try {
+      final f = await _cacheFile('route_ends.json');
+      var cache = <String, dynamic>{};
+      if (await f.exists()) {
+        try {
+          cache = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+        } catch (_) {}
+      }
+      final key = '${widget.route.id}';
+      final hit = cache[key];
+      if (hit is Map<String, dynamic>) {
+        if (mounted) {
+          setState(() {
+            _a = hit['a'] as String?;
+            _b = hit['b'] as String?;
+          });
+        }
+        return;
+      }
+      final a = await _reverseName(direct.first);
+      await Future.delayed(const Duration(milliseconds: 1100));
+      final b = await _reverseName(direct.last);
+      if (a != null && b != null) {
+        cache[key] = {'a': a, 'b': b};
+        try {
+          await f.writeAsString(jsonEncode(cache));
+        } catch (_) {}
+        if (mounted) setState(() { _a = a; _b = b; });
+      }
+    } catch (_) {}
+  }
+
+  String get _title {
+    if (_a != null && _b != null && _a != _b) {
+      return '$_a ${_showBack ? "⇄" : "→"} $_b';
+    }
+    return widget.route.name;
   }
 
   @override
@@ -334,6 +407,7 @@ class _RouteMapPageState extends State<RouteMapPage> {
             _fitted = true;
             _fit(all);
           }
+          _resolveNames(direct);
           final lineColor = _kindColor(_kind(widget.route.name));
           return Stack(children: [
             FlutterMap(
@@ -384,16 +458,17 @@ class _RouteMapPageState extends State<RouteMapPage> {
                     border: Border.all(color: context.c.outlineVariant)),
                 child: Row(children: [
                   Expanded(
-                      child: Text(widget.route.name,
+                      child: Text(_title,
                           style: context.t.titleMedium,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis)),
+                  const SizedBox(width: 8),
                   TextButton(
                       onPressed: () {
                         _fitted = false;
                         setState(() => _showBack = !_showBack);
                       },
-                      child: Text(_showBack ? 'Только туда' : 'Оба направления')),
+                      child: Text(_showBack ? 'Туда' : 'Оба')),
                 ]),
               ),
             ),

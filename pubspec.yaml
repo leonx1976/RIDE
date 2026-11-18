@@ -1,7 +1,7 @@
 name: family_box
-description: Калуга — транспорт, навигатор, погода
+description: Калуга — транспорт, навигатор, карты
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.1.0+5
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -17,6 +17,7 @@ dependencies:
   flutter_map: ^6.1.0
   latlong2: ^0.9.1
   geolocator: ^11.0.0
+  path_provider: ^2.1.4
 
 flutter:
   uses-material-design: true

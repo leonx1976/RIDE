@@ -7,7 +7,7 @@ import 'web_page.dart';
 const kWeatherMap =
     'https://yandex.ru/pogoda/ru/kaluga/maps/nowcast?ll=36.2274_54.5092&z=9';
 const kTrafficMap =
-    'https://yandex.ru/maps/6/kaluga/transport/?l=sat%2Cskl&ll=36.252414%2C54.514724&z=16';
+    'https://yandex.ru/maps/6/kaluga/transport/?l=sat%2Cskl&ll=36.251580%2C54.517620&z=16';
 const kRuStoreNavi = 'https://www.rustore.ru/catalog/app/ru.yandex.yandexnavi';
 
 class HomePage extends StatelessWidget {
@@ -23,7 +23,8 @@ class HomePage extends StatelessWidget {
             title: 'Карта погоды',
             subtitle: 'Осадки в реальном времени',
             onTap: () => Navigator.pushNamed(context, '/web',
-                arguments: WebArgs(kWeatherMap, 'Карта погоды', hideChrome: true)),
+                arguments: WebArgs(kWeatherMap, 'Карта погоды',
+                    bare: true, mapOnly: true)),
           ),
           Tile(
             icon: Icons.navigation_rounded,
@@ -49,7 +50,8 @@ class HomePage extends StatelessWidget {
             title: 'Движение транспорта',
             subtitle: 'Автобусы и троллейбусы онлайн',
             onTap: () => Navigator.pushNamed(context, '/web',
-                arguments: WebArgs(kTrafficMap, 'Движение транспорта', hideChrome: true)),
+                arguments: WebArgs(kTrafficMap, 'Движение транспорта',
+                    bare: true, mapOnly: true)),
           ),
           Tile(
             icon: Icons.credit_card_rounded,

@@ -8,10 +8,12 @@ import 'home_page.dart';
 import 'main.dart';
 
 class WebArgs {
-  WebArgs(this.url, this.title, {this.clean = false, this.waitReady = false});
+  WebArgs(this.url, this.title,
+      {this.clean = false, this.waitReady = false, this.hideChrome = false});
   final String url, title;
   final bool clean;
   final bool waitReady;
+  final bool hideChrome;
 }
 
 class WebPage extends StatefulWidget {
@@ -30,17 +32,15 @@ class _WebPageState extends State<WebPage> {
   void initState() {
     super.initState();
     _overlay = widget.args.waitReady;
-
     c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
-        onProgress: (v) => setState(() => p = v / 100),
+        onProgress: (v) { if (mounted) setState(() => p = v / 100); },
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
-          if (widget.args.clean) {
-            _waitFormReady();
-          }
+          if (widget.args.hideChrome) _hideChrome();
+          if (widget.args.clean) _waitForm();
           WebNav.instance.refresh();
         },
         onNavigationRequest: (req) async {
@@ -58,40 +58,50 @@ class _WebPageState extends State<WebPage> {
     WebNav.instance.attach(c);
   }
 
-  Future<void> _waitFormReady({int attempt = 0}) async {
-    if (!mounted) return;
+  Future<void> _hideChrome() async {
+    const js = '''
+      (function(){
+        var sels = ['header','footer','[class*="header"]','[class*="topbar"]',
+          '[class*="search-panel"]','[class*="sidebar"]','[class*="side-panel"]',
+          '[class*="banner"]','[class*="advert"]','[class*="promo"]',
+          '[class*="subscription"]','[class*="onboarding"]','[class*="popup"]'];
+        sels.forEach(function(s){
+          document.querySelectorAll(s).forEach(function(e){
+            if (!e.querySelector('canvas') && !e.querySelector('[class*="map"]')) {
+              e.style.display='none';
+            }
+          });
+        });
+        document.body.style.overflow='hidden';
+      })();
+    ''';
+    for (var i = 0; i < 6; i++) {
+      try { await c.runJavaScript(js); } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 700));
+    }
+  }
 
-    // Максимум 60 попыток по 500 мс = 30 секунд
-    if (attempt > 60) {
+  Future<void> _waitForm({int attempt = 0}) async {
+    if (!mounted) return;
+    if (attempt > 64) {
       if (mounted) setState(() => _overlay = false);
       return;
     }
-
     try {
-      final hasForm = await c.runJavaScriptReturningResult('''
-        (function() {
+      final has = await c.runJavaScriptReturningResult('''
+        (function(){
           var pay = document.getElementById('tk-pay');
-          if (pay && pay.querySelector('form, input, button')) {
-            return true;
-          }
-          return false;
+          return !!(pay && pay.querySelector('form, input, button'));
         })()
       ''');
-
-      if (hasForm == true) {
-        // Форма появилась — убираем всё лишнее вокруг неё
+      if (has == true) {
         await c.runJavaScript('''
-          // Кликаем кнопку куки, если есть
-          var cookieBtn = document.getElementById('cookieAcceptBtn');
-          if (cookieBtn) cookieBtn.click();
-          
-          // Удаляем шапку, футер, меню, баннеры
-          ['header','footer','.loader-wrapper','.cookie-banner','.breadcrumb','nav','.navbar','.menu','aside','h1','h5']
-            .forEach(function(s) {
-              document.querySelectorAll(s).forEach(function(e) { e.remove(); });
-            });
-          
-          // Скрываем все элементы вокруг формы, оставляем только её
+          var b = document.getElementById('cookieAcceptBtn');
+          if (b) b.click();
+          ['header','footer','.loader-wrapper','.cookie-banner','.breadcrumb',
+           'nav','.navbar','.menu','aside','h1','h5'].forEach(function(s){
+            document.querySelectorAll(s).forEach(function(e){ e.remove(); });
+          });
           var pay = document.getElementById('tk-pay');
           if (pay) {
             var node = pay;
@@ -99,27 +109,19 @@ class _WebPageState extends State<WebPage> {
               var parent = node.parentElement;
               if (parent) {
                 for (var i = 0; i < parent.children.length; i++) {
-                  if (parent.children[i] !== node) {
-                    parent.children[i].style.display = 'none';
-                  }
+                  if (parent.children[i] !== node) parent.children[i].style.display='none';
                 }
               }
               node = parent;
             }
           }
         ''');
-
+        await Future.delayed(const Duration(seconds: 2));
         if (mounted) setState(() => _overlay = false);
         return;
       }
-    } catch (e) {
-      // Игнорируем ошибки, пробуем дальше
-    }
-
-    // Повторяем проверку через 500 мс
-    Future.delayed(const Duration(milliseconds: 500), () {
-      _waitFormReady(attempt: attempt + 1);
-    });
+    } catch (_) {}
+    Future.delayed(const Duration(milliseconds: 500), () => _waitForm(attempt: attempt + 1));
   }
 
   @override
@@ -134,44 +136,28 @@ class _WebPageState extends State<WebPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
             child: Row(children: [
-              Expanded(
-                child: Text(widget.args.title,
-                    style: context.t.titleMedium,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-              ),
-              IconButton(
-                tooltip: 'Обновить',
-                onPressed: () => c.reload(),
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-              IconButton(
-                tooltip: 'Открыть в браузере',
-                onPressed: () => launchUrl(Uri.parse(widget.args.url),
-                    mode: LaunchMode.externalApplication),
-                icon: const Icon(Icons.open_in_browser_rounded),
-              ),
+              Expanded(child: Text(widget.args.title, style: context.t.titleMedium,
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
+              IconButton(tooltip: 'Обновить', onPressed: () => c.reload(),
+                  icon: const Icon(Icons.refresh_rounded)),
+              IconButton(tooltip: 'Открыть в браузере',
+                  onPressed: () => launchUrl(Uri.parse(widget.args.url),
+                      mode: LaunchMode.externalApplication),
+                  icon: const Icon(Icons.open_in_browser_rounded)),
             ]),
           ),
-          if (p < 1)
-            LinearProgressIndicator(value: p, minHeight: 2, color: context.c.primary),
+          if (p < 1) LinearProgressIndicator(value: p, minHeight: 2, color: context.c.primary),
           Expanded(child: WebViewWidget(controller: c)),
         ]),
         if (_overlay)
-          Positioned.fill(
-            child: Container(
-              color: context.c.surface,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    Text('Загружаем форму…', style: context.t.bodySmall),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          Positioned.fill(child: Container(
+            color: context.c.surface,
+            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text('Подключение', style: context.t.bodySmall),
+            ])),
+          )),
       ]);
 }
 
@@ -190,7 +176,6 @@ class CardPage extends StatefulWidget {
 class _CardPageState extends State<CardPage> {
   static const _url = 'https://t-karta40.ru/proverka-balansa-transportnoj-karty/';
   static const _key = 'tk_cards_v2';
-
   final _ctrl = TextEditingController();
   List<TkCard> _cards = [];
   bool _loading = true;
@@ -208,22 +193,17 @@ class _CardPageState extends State<CardPage> {
       if (raw == null) {
         final old = p.getStringList('tk_cards') ?? [];
         if (old.isNotEmpty) {
-          final migrated = old.map((s) {
+          raw = jsonEncode(old.map((s) {
             final parts = s.split('|');
-            return {
-              'name': parts.first,
-              'number': parts.length > 1 ? parts[1] : parts.first,
-            };
-          }).toList();
-          raw = jsonEncode(migrated);
+            return {'name': parts.first,
+                    'number': parts.length > 1 ? parts[1] : parts.first};
+          }).toList());
           await p.setString(_key, raw);
         }
       }
       if (raw != null) {
         final list = jsonDecode(raw) as List;
-        _cards = list
-            .map((e) => TkCard(e['name'] as String, e['number'] as String))
-            .toList();
+        _cards = list.map((e) => TkCard(e['name'] as String, e['number'] as String)).toList();
       }
     } catch (_) {
       _cards = [];
@@ -234,9 +214,8 @@ class _CardPageState extends State<CardPage> {
   Future<bool> _persist() async {
     try {
       final p = await SharedPreferences.getInstance();
-      final data = jsonEncode(
-          _cards.map((e) => {'name': e.name, 'number': e.number}).toList());
-      return await p.setString(_key, data);
+      return await p.setString(_key,
+          jsonEncode(_cards.map((e) => {'name': e.name, 'number': e.number}).toList()));
     } catch (_) {
       return false;
     }
@@ -285,23 +264,16 @@ class _CardPageState extends State<CardPage> {
   Future<void> _addDialog() async {
     final nameCtrl = TextEditingController();
     final numberCtrl = TextEditingController(text: _ctrl.text);
-
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Сохранить карту'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: nameCtrl,
-            decoration: const InputDecoration(labelText: 'Чья карта'),
-          ),
+          TextField(controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Чья карта')),
           const SizedBox(height: 12),
-          TextField(
-            controller: numberCtrl,
-            keyboardType: TextInputType.number,
-            maxLength: 9,
-            decoration: const InputDecoration(labelText: 'Номер, 9 цифр'),
-          ),
+          TextField(controller: numberCtrl, keyboardType: TextInputType.number,
+              maxLength: 9, decoration: const InputDecoration(labelText: 'Номер, 9 цифр')),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
@@ -309,7 +281,6 @@ class _CardPageState extends State<CardPage> {
         ],
       ),
     );
-
     if (result != 'ok') return;
     if (_digits(numberCtrl.text).length < 6) {
       _snack('Номер слишком короткий', error: true);
@@ -331,7 +302,6 @@ class _CardPageState extends State<CardPage> {
         ],
       ),
     );
-
     if (result != 'ok' || !mounted) return;
     setState(() => _cards.removeWhere((e) => e.number == card.number));
     final saved = await _persist();
@@ -356,38 +326,24 @@ class _CardPageState extends State<CardPage> {
           ),
         Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: context.c.surface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: context.c.outlineVariant),
-          ),
+          decoration: BoxDecoration(color: context.c.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: context.c.outlineVariant)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('Другая карта', style: context.t.titleMedium),
             const SizedBox(height: 12),
-            TextField(
-              controller: _ctrl,
-              keyboardType: TextInputType.number,
-              maxLength: 9,
-              decoration: const InputDecoration(
-                labelText: 'Номер транспортной карты',
-                helperText: '9 цифр на обратной стороне карты',
-                border: OutlineInputBorder(),
-              ),
-            ),
+            TextField(controller: _ctrl, keyboardType: TextInputType.number, maxLength: 9,
+                decoration: const InputDecoration(
+                    labelText: 'Номер транспортной карты',
+                    helperText: '9 цифр на обратной стороне карты',
+                    border: OutlineInputBorder())),
             const SizedBox(height: 8),
             Row(children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => _open(_ctrl.text),
-                  child: const Text('Проверить баланс'),
-                ),
-              ),
+              Expanded(child: FilledButton(onPressed: () => _open(_ctrl.text),
+                  child: const Text('Проверить баланс'))),
               const SizedBox(width: 12),
-              IconButton.outlined(
-                tooltip: 'Сохранить с именем',
-                onPressed: _addDialog,
-                icon: const Icon(Icons.bookmark_add_outlined),
-              ),
+              IconButton.outlined(tooltip: 'Сохранить с именем', onPressed: _addDialog,
+                  icon: const Icon(Icons.bookmark_add_outlined)),
             ]),
           ]),
         ),

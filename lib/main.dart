@@ -8,6 +8,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'home_page.dart';
 import 'kaluga.dart';
 import 'navigator.dart';
+import 'routes_map.dart';
 import 'schedule_pages.dart';
 import 'web_page.dart';
 
@@ -21,7 +22,6 @@ extension AppColors on BuildContext {
 class ThemeCtrl extends ChangeNotifier {
   ThemeCtrl._();
   static final instance = ThemeCtrl._();
-
   ThemeMode mode = ThemeMode.light;
   bool get isDark => mode == ThemeMode.dark;
 
@@ -97,7 +97,6 @@ class FamilyApp extends StatelessWidget {
 class WebNav extends ChangeNotifier {
   WebNav._();
   static final instance = WebNav._();
-
   WebViewController? _c;
   bool canBack = false, canForward = false;
 
@@ -137,6 +136,11 @@ class NavWatcher extends NavigatorObserver {
   @override void didRemove(Route r, Route? p) => WebNav.instance.touch();
 }
 
+void forceExit() {
+  SystemNavigator.pop();
+  Timer.run(() => exit(0));
+}
+
 class Shell extends StatelessWidget {
   const Shell({super.key});
 
@@ -157,7 +161,7 @@ class Shell extends StatelessWidget {
           if (WebNav.instance.canBack) { await WebNav.instance.back(); return; }
           final nav = navKey.currentState;
           if (nav != null && nav.canPop()) { nav.pop(); return; }
-          _forceExit();
+          forceExit();
         },
         child: Scaffold(
           body: SafeArea(
@@ -175,6 +179,8 @@ class Shell extends StatelessWidget {
                       case '/station':  page = StationPage(src: s.arguments as KalugaSource); break;
                       case '/card':     page = const CardPage(); break;
                       case '/navi':     page = const NaviPage(); break;
+                      case '/routes':   page = const RoutesListPage(); break;
+                      case '/routemap': page = RouteMapPage(route: s.arguments as BusRoute); break;
                       case '/web':      page = WebPage(args: s.arguments as WebArgs); break;
                       default:          page = const HomePage();
                     }
@@ -188,13 +194,6 @@ class Shell extends StatelessWidget {
       ),
     );
   }
-}
-
-void _forceExit() {
-  SystemNavigator.pop();
-  Timer.run(() {
-    exit(0);
-  });
 }
 
 class TopBar extends StatelessWidget {
@@ -227,7 +226,7 @@ class TopBar extends StatelessWidget {
             NavBtn(dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
                 dark ? 'Светлая тема' : 'Тёмная тема',
                 () => ThemeCtrl.instance.toggle()),
-            NavBtn(Icons.close_rounded, 'Выход', _forceExit, danger: true),
+            NavBtn(Icons.close_rounded, 'Выход', forceExit, danger: true),
           ]);
         },
       ),

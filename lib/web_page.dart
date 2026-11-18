@@ -9,12 +9,85 @@ import 'main.dart';
 
 class WebArgs {
   WebArgs(this.url, this.title,
-      {this.clean = false, this.waitReady = false, this.hideChrome = false});
+      {this.clean = false,
+      this.waitReady = false,
+      this.bare = false,
+      this.mapOnly = false});
   final String url, title;
   final bool clean;
   final bool waitReady;
-  final bool hideChrome;
+  final bool bare;
+  final bool mapOnly;
 }
+
+const String _isolateJs = r'''
+(function(){
+  if (window.__fbIso) return;
+  function pick(){
+    var c = document.querySelector('canvas');
+    if (c && c.offsetWidth > 50 && c.offsetHeight > 50) return c;
+    var sels = ['[class*="map-container"]','[class*="map-view"]','[class*="ymaps"]',
+                '[id*="map"]','[class*="map"]'];
+    for (var i=0;i<sels.length;i++){
+      var list = document.querySelectorAll(sels[i]);
+      for (var j=0;j<list.length;j++){
+        var e = list[j];
+        if (e.offsetWidth > 150 && e.offsetHeight > 150) return e;
+      }
+    }
+    return null;
+  }
+  function hide(el){ try{ el.style.setProperty('display','none','important'); }catch(e){} }
+  function box(el,v){ try{ el.style.setProperty('width',v,'important');
+                           el.style.setProperty('height',v,'important'); }catch(e){} }
+  function run(){
+    var m = pick();
+    if (!m) return;
+    var node = m;
+    while (node && node !== document.body && node !== document.documentElement){
+      var p = node.parentElement;
+      if (!p) break;
+      for (var i=0;i<p.children.length;i++){
+        var s = p.children[i];
+        if (s !== node && !s.contains(m)) hide(s);
+      }
+      try{
+        p.style.setProperty('margin','0','important');
+        p.style.setProperty('padding','0','important');
+        p.style.setProperty('max-width','none','important');
+        p.style.setProperty('max-height','none','important');
+        p.style.setProperty('min-height','100%','important');
+        box(p,'100%');
+      }catch(e){}
+      node = p;
+    }
+    var bad = ['advert','banner','promo','install','subscription','onboarding','popup',
+               'modal','cookie','notice','tooltip','zoom','controls','header','sidebar',
+               'footer','search','menu','button','btn','tabs','story','hint','disclaimer'];
+    bad.forEach(function(k){
+      document.querySelectorAll('[class*="'+k+'"]').forEach(function(e){
+        if (e !== m && !e.contains(m) && !e.querySelector('canvas')) hide(e);
+      });
+    });
+    try{
+      var de = document.documentElement;
+      de.style.setProperty('margin','0','important');
+      de.style.setProperty('overflow','hidden','important');
+      box(de,'100%');
+      var b = document.body;
+      b.style.setProperty('margin','0','important');
+      b.style.setProperty('padding','0','important');
+      b.style.setProperty('overflow','hidden','important');
+      b.style.setProperty('background','#ffffff','important');
+      box(b,'100%');
+    }catch(e){}
+    if (m.tagName !== 'CANVAS') box(m,'100%');
+    try{ window.dispatchEvent(new Event('resize')); }catch(e){}
+  }
+  run();
+  window.__fbIso = setInterval(run, 600);
+})();
+''';
 
 class WebPage extends StatefulWidget {
   const WebPage({super.key, required this.args});
@@ -39,7 +112,7 @@ class _WebPageState extends State<WebPage> {
         onProgress: (v) { if (mounted) setState(() => p = v / 100); },
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
-          if (widget.args.hideChrome) _hideChrome();
+          if (widget.args.mapOnly) _isolate();
           if (widget.args.clean) _waitForm();
           WebNav.instance.refresh();
         },
@@ -58,26 +131,12 @@ class _WebPageState extends State<WebPage> {
     WebNav.instance.attach(c);
   }
 
-  Future<void> _hideChrome() async {
-    const js = '''
-      (function(){
-        var sels = ['header','footer','[class*="header"]','[class*="topbar"]',
-          '[class*="search-panel"]','[class*="sidebar"]','[class*="side-panel"]',
-          '[class*="banner"]','[class*="advert"]','[class*="promo"]',
-          '[class*="subscription"]','[class*="onboarding"]','[class*="popup"]'];
-        sels.forEach(function(s){
-          document.querySelectorAll(s).forEach(function(e){
-            if (!e.querySelector('canvas') && !e.querySelector('[class*="map"]')) {
-              e.style.display='none';
-            }
-          });
-        });
-        document.body.style.overflow='hidden';
-      })();
-    ''';
-    for (var i = 0; i < 6; i++) {
-      try { await c.runJavaScript(js); } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 700));
+  Future<void> _isolate() async {
+    for (var i = 0; i < 8; i++) {
+      try {
+        await c.runJavaScript(_isolateJs);
+      } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 500));
     }
   }
 
@@ -121,7 +180,8 @@ class _WebPageState extends State<WebPage> {
         return;
       }
     } catch (_) {}
-    Future.delayed(const Duration(milliseconds: 500), () => _waitForm(attempt: attempt + 1));
+    Future.delayed(const Duration(milliseconds: 500),
+        () => _waitForm(attempt: attempt + 1));
   }
 
   @override
@@ -131,34 +191,45 @@ class _WebPageState extends State<WebPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Stack(children: [
-        Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
-            child: Row(children: [
-              Expanded(child: Text(widget.args.title, style: context.t.titleMedium,
-                  maxLines: 1, overflow: TextOverflow.ellipsis)),
-              IconButton(tooltip: 'Обновить', onPressed: () => c.reload(),
-                  icon: const Icon(Icons.refresh_rounded)),
-              IconButton(tooltip: 'Открыть в браузере',
-                  onPressed: () => launchUrl(Uri.parse(widget.args.url),
-                      mode: LaunchMode.externalApplication),
-                  icon: const Icon(Icons.open_in_browser_rounded)),
-            ]),
-          ),
-          if (p < 1) LinearProgressIndicator(value: p, minHeight: 2, color: context.c.primary),
-          Expanded(child: WebViewWidget(controller: c)),
-        ]),
-        if (_overlay)
-          Positioned.fill(child: Container(
-            color: context.c.surface,
-            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text('Подключение', style: context.t.bodySmall),
-            ])),
-          )),
+  Widget build(BuildContext context) {
+    if (widget.args.bare) {
+      return Stack(children: [
+        WebViewWidget(controller: c),
+        if (_overlay) _cover(context),
       ]);
+    }
+    return Stack(children: [
+      Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+          child: Row(children: [
+            Expanded(child: Text(widget.args.title, style: context.t.titleMedium,
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            IconButton(tooltip: 'Обновить', onPressed: () => c.reload(),
+                icon: const Icon(Icons.refresh_rounded)),
+            IconButton(tooltip: 'Открыть в браузере',
+                onPressed: () => launchUrl(Uri.parse(widget.args.url),
+                    mode: LaunchMode.externalApplication),
+                icon: const Icon(Icons.open_in_browser_rounded)),
+          ]),
+        ),
+        if (p < 1) LinearProgressIndicator(value: p, minHeight: 2, color: context.c.primary),
+        Expanded(child: WebViewWidget(controller: c)),
+      ]),
+      if (_overlay) _cover(context),
+    ]);
+  }
+
+  Widget _cover(BuildContext context) => Positioned.fill(
+        child: Container(
+          color: context.c.surface,
+          child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text('Подключение', style: context.t.bodySmall),
+          ])),
+        ),
+      );
 }
 
 class TkCard {

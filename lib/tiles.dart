@@ -11,8 +11,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 
 const kTileHost = 'https://tile.openstreetmap.org';
-const kTileUa = 'FamilyBox/1.2 (personal family app)';
+const kTileUa = 'FamilyBox/1.3 (personal family app)';
 const int kMaxParallel = 4;
+
+/// Сколько тайлов не удалось загрузить за всё время работы приложения.
+int tileFailures = 0;
 
 Directory? _root;
 Future<Directory> tileRoot() async {
@@ -77,6 +80,7 @@ Future<Uint8List?> fetchTile(int z, int x, int y) async {
   } finally {
     _release();
   }
+  tileFailures++;
   return null;
 }
 

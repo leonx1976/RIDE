@@ -10,6 +10,7 @@ import 'main.dart';
 import 'tiles.dart';
 
 const String _busHost = 'https://bus40.su';
+const String _descUrl = 'https://t-karta40.ru/marshruty/';
 const LatLng _kaluga = LatLng(54.5293, 36.2754);
 
 const Color _cTrolley = Color(0xFF2F80ED);
@@ -28,6 +29,80 @@ Future<File> _cacheFile(String name) async {
   return File('${d.path}/$name');
 }
 
+String _entities(String s) => s
+    .replaceAll('&#8212;', '—')
+    .replaceAll('&#8211;', '–')
+    .replaceAll('&mdash;', '—')
+    .replaceAll('&ndash;', '–')
+    .replaceAll('&#171;', '«')
+    .replaceAll('&#187;', '»')
+    .replaceAll('&laquo;', '«')
+    .replaceAll('&raquo;', '»')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&');
+
+String _pretty(String s) {
+  var t = s.replaceAll(RegExp(r'\s*[—–-]\s*'), ' — ');
+  t = t.toLowerCase();
+  t = t.replaceAll(RegExp(r'\.(?=[а-яa-z])'), '. ');
+  t = t.split(' ').map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
+  t = t
+      .replaceAll(RegExp(r'\bУл\.'), 'ул.')
+      .replaceAll(RegExp(r'\bПос\.'), 'пос.')
+      .replaceAll(RegExp(r'\bМкр\.'), 'мкр.')
+      .replaceAll(RegExp(r'\bСт\.'), 'ст.')
+      .replaceAll(RegExp(r'\bД\.'), 'д.')
+      .replaceAll(RegExp(r'\bСкв\.'), 'скв.')
+      .replaceAll('К.э.', 'К.Э.');
+  return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+Future<Map<String, String>> loadRouteDescriptions({bool force = false}) async {
+  final f = await _cacheFile('route_desc.json');
+  if (!force && await f.exists()) {
+    try {
+      final m = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+      return m.map((k, v) => MapEntry(k, v as String));
+    } catch (_) {}
+  }
+  final r = await http.get(Uri.parse(_descUrl),
+      headers: {'User-Agent': 'FamilyBox/1.2'}).timeout(const Duration(seconds: 25));
+  if (r.statusCode != 200) throw Exception('desc ${r.statusCode}');
+  final html = utf8.decode(r.bodyBytes, allowMalformed: true);
+  final out = <String, String>{};
+  for (final m in RegExp(r'<li>(.*?)</li>', dotAll: true).allMatches(html)) {
+    var s = _entities(m.group(1)!.replaceAll(RegExp(r'<[^>]*>'), ''));
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final mm = RegExp(r'^([0-9]+[0-9A-Za-zА-Яа-я\-]*)\s*(?:\([^)]*\))?\s*\.?\s*(.+)$')
+        .firstMatch(s);
+    if (mm == null) continue;
+    final base = mm.group(1)!.split('-').first;
+    var desc = mm.group(2)!;
+    var kind = '';
+    if (RegExp(r'^ТР\.').hasMatch(desc)) {
+      kind = 't';
+      desc = desc.replaceFirst(RegExp(r'^ТР\.\s*'), '');
+    } else if (RegExp(r'^АВ\.').hasMatch(desc)) {
+      kind = 'b';
+      desc = desc.replaceFirst(RegExp(r'^АВ\.\s*'), '');
+    }
+    while (RegExp(r'\s*\([^)]*\)\s*$').hasMatch(desc)) {
+      desc = desc.replaceAll(RegExp(r'\s*\([^)]*\)\s*$'), '').trim();
+    }
+    desc = _pretty(desc);
+    if (desc.isEmpty) continue;
+    out['$base|$kind'] = desc;
+    out.putIfAbsent(base, () => desc);
+  }
+  if (out.isEmpty) throw Exception('no descriptions');
+  try {
+    await f.writeAsString(jsonEncode(out));
+  } catch (_) {}
+  return out;
+}
+
 Future<List<BusRoute>> loadBusRoutes({bool force = false}) async {
   final f = await _cacheFile('bus_routes.json');
   if (!force && await f.exists()) {
@@ -40,7 +115,7 @@ Future<List<BusRoute>> loadBusRoutes({bool force = false}) async {
     } catch (_) {}
   }
   final r = await http.get(Uri.parse('$_busHost/'),
-      headers: {'User-Agent': 'FamilyBox/1.1'}).timeout(const Duration(seconds: 25));
+      headers: {'User-Agent': 'FamilyBox/1.2'}).timeout(const Duration(seconds: 25));
   if (r.statusCode != 200) throw Exception('site ${r.statusCode}');
   final html = utf8.decode(r.bodyBytes, allowMalformed: true);
   final re = RegExp(r'SetCurrentRoute\(this,\s*(\d+)\);">([^<]+)</a>');
@@ -67,7 +142,7 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
   if (body == null) {
     final r = await http.get(
         Uri.parse('$_busHost/default.aspx?target=main&action=get_polylines'),
-        headers: {'User-Agent': 'FamilyBox/1.1', 'Referer': '$_busHost/'})
+        headers: {'User-Agent': 'FamilyBox/1.2', 'Referer': '$_busHost/'})
         .timeout(const Duration(seconds: 40));
     if (r.statusCode != 200) throw Exception('polylines ${r.statusCode}');
     body = utf8.decode(r.bodyBytes, allowMalformed: true);
@@ -96,18 +171,11 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
   return out;
 }
 
-String _shortName(String s) => s
-    .replaceAll('улица', 'ул.')
-    .replaceAll('Улица', 'ул.')
-    .replaceAll('проспект', 'пр-т')
-    .replaceAll('переулок', 'пер.')
-    .trim();
-
 Future<String?> _reverseName(LatLng p) async {
   try {
     final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse'
         '?format=json&lat=${p.latitude}&lon=${p.longitude}&zoom=17&addressdetails=1');
-    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.1'})
+    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.2'})
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) return null;
     final j = jsonDecode(r.body) as Map<String, dynamic>;
@@ -118,7 +186,7 @@ Future<String?> _reverseName(LatLng p) async {
     final other = (a['village'] ?? a['town'] ?? a['city']) as String?;
     final pick = road ?? place ?? other;
     if (pick == null || pick.isEmpty) return null;
-    return _shortName(pick);
+    return _pretty(pick);
   } catch (_) {
     return null;
   }
@@ -172,6 +240,12 @@ class _RoutesListPageState extends State<RoutesListPage> {
   late Future<List<BusRoute>> _f = loadBusRoutes();
 
   @override
+  void initState() {
+    super.initState();
+    loadRouteDescriptions().catchError((_) => <String, String>{});
+  }
+
+  @override
   Widget build(BuildContext context) => FutureBuilder<List<BusRoute>>(
         future: _f,
         builder: (context, s) {
@@ -205,14 +279,16 @@ class _RoutesListPageState extends State<RoutesListPage> {
           }
           final order = [0, 3, 2, 1].where(groups.containsKey).toList();
           final dark = Theme.of(context).brightness == Brightness.dark;
-
           return Column(children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
               child: Row(children: [
                 Expanded(child: Text('Карта маршрутов', style: context.t.titleLarge)),
                 IconButton(
-                    onPressed: () => setState(() => _f = loadBusRoutes(force: true)),
+                    onPressed: () {
+                      loadRouteDescriptions(force: true).catchError((_) => <String, String>{});
+                      setState(() => _f = loadBusRoutes(force: true));
+                    },
                     icon: const Icon(Icons.refresh_rounded)),
               ]),
             ),
@@ -237,8 +313,7 @@ class _RoutesListPageState extends State<RoutesListPage> {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: groups[k]!.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                         maxCrossAxisExtent: 64,
                         mainAxisSpacing: 8,
                         crossAxisSpacing: 8,
@@ -299,35 +374,43 @@ class RouteMapPage extends StatefulWidget {
 
 class _RouteMapPageState extends State<RouteMapPage> {
   final MapController _map = MapController();
-  final CachedTileProvider _tiles = CachedTileProvider();
+  CachedTileProvider _tiles = CachedTileProvider();
+  int _epoch = 0;
   late Future<Map<int, Map<String, List<LatLng>>>> _f = loadPolylines();
   bool _showBack = true;
-  bool _fitted = false;
   bool _namesStarted = false;
-  String? _a;
-  String? _b;
+  String? _desc;
 
   @override
   void initState() {
     super.initState();
     tileRoot();
+    for (final ms in [2500, 6000, 11000]) {
+      Future.delayed(Duration(milliseconds: ms), () {
+        if (!mounted) return;
+        setState(() {
+          _epoch++;
+          _tiles = CachedTileProvider();
+        });
+      });
+    }
   }
 
-  void _fit(List<LatLng> pts) {
-    if (pts.length < 2) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      try {
-        _map.fitCamera(CameraFit.bounds(
-            bounds: LatLngBounds.fromPoints(pts),
-            padding: const EdgeInsets.all(40)));
-      } catch (_) {}
-    });
-  }
-
-  Future<void> _resolveNames(List<LatLng> direct) async {
-    if (_namesStarted || direct.length < 2) return;
+  Future<void> _resolveDesc(List<LatLng> direct) async {
+    if (_namesStarted) return;
     _namesStarted = true;
+    final n = _numberOf(widget.route.name).split('/').first;
+    final k = _kind(widget.route.name);
+    final tag = k == 0 ? 't' : (k == 1 ? 't' : 'b');
+    try {
+      final map = await loadRouteDescriptions();
+      final hit = map['$n|$tag'] ?? map['$n|'] ?? map[n];
+      if (hit != null && hit.isNotEmpty) {
+        if (mounted) setState(() => _desc = hit);
+        return;
+      }
+    } catch (_) {}
+    if (direct.length < 2) return;
     try {
       final f = await _cacheFile('route_ends.json');
       var cache = <String, dynamic>{};
@@ -339,13 +422,12 @@ class _RouteMapPageState extends State<RouteMapPage> {
       final key = '${widget.route.id}';
       final hit = cache[key];
       if (hit is Map<String, dynamic>) {
-        if (mounted) {
-          setState(() {
-            _a = hit['a'] as String?;
-            _b = hit['b'] as String?;
-          });
+        final a = hit['a'] as String?;
+        final b = hit['b'] as String?;
+        if (a != null && b != null && mounted) {
+          setState(() => _desc = '$a — $b');
+          return;
         }
-        return;
       }
       final a = await _reverseName(direct.first);
       await Future.delayed(const Duration(milliseconds: 1100));
@@ -355,16 +437,9 @@ class _RouteMapPageState extends State<RouteMapPage> {
         try {
           await f.writeAsString(jsonEncode(cache));
         } catch (_) {}
-        if (mounted) setState(() { _a = a; _b = b; });
+        if (mounted) setState(() => _desc = '$a — $b');
       }
     } catch (_) {}
-  }
-
-  String get _title {
-    if (_a != null && _b != null && _a != _b) {
-      return '$_a ${_showBack ? "⇄" : "→"} $_b';
-    }
-    return widget.route.name;
   }
 
   @override
@@ -385,37 +460,38 @@ class _RouteMapPageState extends State<RouteMapPage> {
                   const Text('Не удалось загрузить схему маршрута',
                       textAlign: TextAlign.center),
                   const SizedBox(height: 16),
-                  FilledButton(
-                      onPressed: () {
-                        _fitted = false;
-                        setState(() => _f = loadPolylines(force: true));
-                      },
-                      child: const Text('Повторить')),
+                  FilledButton(onPressed: () {
+                    setState(() => _f = loadPolylines(force: true));
+                  }, child: const Text('Повторить')),
                 ]),
               ),
             );
           }
           final dirs = s.data![widget.route.id];
           if (dirs == null || dirs.isEmpty) {
-            return Center(
-                child: Text('Для этого маршрута нет схемы', style: context.t.bodyMedium));
+            return Center(child: Text('Для этого маршрута нет схемы',
+                style: context.t.bodyMedium));
           }
           final direct = dirs['direct'] ?? <LatLng>[];
           final back = dirs['back'] ?? <LatLng>[];
           final all = [...direct, if (_showBack) ...back];
-          if (!_fitted && all.length > 1) {
-            _fitted = true;
-            _fit(all);
-          }
-          _resolveNames(direct);
+          _resolveDesc(direct);
           final lineColor = _kindColor(_kind(widget.route.name));
+          final bounds = all.length > 1 ? LatLngBounds.fromPoints(all) : null;
           return Stack(children: [
             FlutterMap(
               mapController: _map,
               options: MapOptions(
-                  initialCenter: all.isEmpty ? _kaluga : all.first, initialZoom: 13),
+                initialCenter: all.isEmpty ? _kaluga : all.first,
+                initialZoom: 13,
+                initialCamera: bounds == null
+                    ? null
+                    : CameraFit.bounds(bounds: bounds,
+                        padding: const EdgeInsets.fromLTRB(30, 90, 30, 60)),
+              ),
               children: [
                 TileLayer(
+                  key: ValueKey('tiles$_epoch'),
                   urlTemplate: '$kTileHost/{z}/{x}/{y}.png',
                   userAgentPackageName: 'ru.family.family_box',
                   tileProvider: _tiles,
@@ -429,17 +505,11 @@ class _RouteMapPageState extends State<RouteMapPage> {
                 ]),
                 MarkerLayer(markers: [
                   if (direct.isNotEmpty)
-                    Marker(
-                        point: direct.first,
-                        width: 30,
-                        height: 30,
+                    Marker(point: direct.first, width: 30, height: 30,
                         alignment: Alignment.center,
                         child: Icon(Icons.trip_origin, color: lineColor, size: 22)),
                   if (direct.isNotEmpty)
-                    Marker(
-                        point: direct.last,
-                        width: 30,
-                        height: 30,
+                    Marker(point: direct.last, width: 30, height: 30,
                         alignment: Alignment.center,
                         child: const Icon(Icons.flag_rounded,
                             color: Color(0xFFD64545), size: 22)),
@@ -451,23 +521,20 @@ class _RouteMapPageState extends State<RouteMapPage> {
               left: 12,
               right: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
                 decoration: BoxDecoration(
                     color: context.c.surface,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: context.c.outlineVariant)),
-                child: Row(children: [
+                child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
                   Expanded(
-                      child: Text(_title,
-                          style: context.t.titleMedium,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis)),
-                  const SizedBox(width: 8),
+                    child: Text(_desc ?? widget.route.name,
+                        style: context.t.titleMedium,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis),
+                  ),
                   TextButton(
-                      onPressed: () {
-                        _fitted = false;
-                        setState(() => _showBack = !_showBack);
-                      },
+                      onPressed: () => setState(() => _showBack = !_showBack),
                       child: Text(_showBack ? 'Туда' : 'Оба')),
                 ]),
               ),

@@ -12,49 +12,119 @@ class WebArgs {
       {this.clean = false,
       this.waitReady = false,
       this.bare = false,
-      this.bannerOnly = false});
+      this.bannerOnly = false,
+      this.geoOnly = false});
   final String url, title;
   final bool clean;
   final bool waitReady;
   final bool bare;
   final bool bannerOnly;
+  final bool geoOnly;
 }
 
-const String _bannerJs = r'''
+String _mapJs(bool geoOnly) => '''
 (function(){
+  var GEO_ONLY = ${geoOnly ? 'true' : 'false'};
+  var geoRe = /geolocat|geo-loc|locate|my-?location|my-?position|where-?i|найти меня|мо[её] местоположение|где я|определить местоположение/i;
+  var otherRe = /zoom|layers?|traffic|ruler|panorama|compass|scale|search|menu|close|share|route|settings|filter|tabs|bookmark|feedback/i;
+  function attr(e){
+    return [e.getAttribute('class'), e.getAttribute('id'), e.getAttribute('aria-label'),
+            e.getAttribute('title'), e.getAttribute('data-name'),
+            (e.textContent || '').slice(0, 40)].join(' ');
+  }
   function hide(e){
     if (!e || e.getAttribute('data-fbh')) return;
     try { e.setAttribute('data-fbh','1'); e.style.setProperty('display','none','important'); } catch(x){}
   }
+  function keep(e){ try { e.setAttribute('data-fbk','1'); } catch(x){} }
   function hasCanvas(e){ try { return !!e.querySelector('canvas'); } catch(x){ return false; } }
-  function small(e){ try { return e.offsetHeight > 0 && e.offsetHeight <= 220; } catch(x){ return false; } }
-  var KEYS = ['banner','advert','promo','install','smart','subscription','onboarding',
-              'cookie','notice','popup','modal','disclaimer','story','share','social',
-              'header','footer','sidebar','topbar','app-bar'];
-  var TXT = /^(скачать|установить|продолжить в приложении|открыть в приложении|открыть приложение|подробнее|не сейчас|позже)$/i;
+  function small(e){ try { return e.offsetHeight > 0 && e.offsetHeight <= 240; } catch(x){ return false; } }
+  function area(e){ try { return e.offsetWidth * e.offsetHeight; } catch(x){ return 0; } }
+  function findMap(){
+    var sels = ['[class*="map-container"]','[class*="map-view"]','[class*="map__"]',
+                '[class*="ymaps"]','[id*="map"]','[class*="map"]'];
+    var need = window.innerWidth * window.innerHeight * 0.30;
+    for (var i=0;i<sels.length;i++){
+      var l = document.querySelectorAll(sels[i]);
+      for (var j=0;j<l.length;j++){ if (area(l[j]) >= need) return l[j]; }
+    }
+    var cs = document.querySelectorAll('canvas'), best = null, ba = 0;
+    for (var k=0;k<cs.length;k++){ var a = area(cs[k]); if (a > ba){ ba = a; best = cs[k]; } }
+    if (best && ba >= need) return best.parentElement || best;
+    return document.body;
+  }
+  function findGeo(m){
+    var l = m.querySelectorAll('button,[role="button"],a,[class*="geolocat"],[class*="locate"],[aria-label],[title]');
+    for (var i=0;i<l.length;i++){ if (geoRe.test(attr(l[i]))) return l[i]; }
+    return null;
+  }
+  var CHROME = ['banner','advert','promo','install','smart','subscription','onboarding',
+                'cookie','notice','popup','modal','disclaimer','story','share','social',
+                'header','footer','sidebar','topbar','app-bar','rtb','adfox','adv'];
+  var CTRL = ['zoom','control','toolbar','layers','traffic','ruler','compass','scale',
+              'copyright','attrib','logo','search','menu','tabs','panel','btn','button',
+              'hint','tooltip','legend'];
+  var TXT = /^(скачать|установить|продолжить в приложении|открыть в приложении|открыть приложение|подробнее|не сейчас|позже|закрыть)\$/i;
   function run(){
-    KEYS.forEach(function(k){
-      document.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
+    var m = findMap();
+    var g = findGeo(m);
+    if (g){
+      var p = g;
+      while (p && p !== document.body){ keep(p); if (p === m) break; p = p.parentElement; }
+    }
+    CHROME.forEach(function(k){
+      document.querySelectorAll('[class*="' + k + '"],[id*="' + k + '"]').forEach(function(e){
+        if (e === g || (g && e.contains(g))) return;
+        if (e.getAttribute('data-fbk')) return;
         if (!hasCanvas(e) && small(e)) hide(e);
       });
+    });
+    document.querySelectorAll('iframe').forEach(function(e){
+      var s = (e.getAttribute('src') || '');
+      if (/ads|adfox|an\\.yandex|doubleclick|rtb/i.test(s)) hide(e);
     });
     document.querySelectorAll('a,button,[role="button"]').forEach(function(e){
       var t = (e.textContent || '').trim();
       if (t.length > 40 || !TXT.test(t)) return;
       var p = e;
-      for (var i = 0; i < 5 && p; i++){
-        if (small(p) && !hasCanvas(p)) { hide(p); break; }
+      for (var i=0;i<5 && p;i++){
+        if (small(p) && !hasCanvas(p) && p !== g && !(g && p.contains(g))){ hide(p); break; }
         p = p.parentElement;
       }
     });
+    if (!GEO_ONLY) return;
+    CTRL.forEach(function(k){
+      m.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
+        if (e === m || e === g) return;
+        if (g && (e.contains(g) || g.contains(e))) return;
+        if (e.getAttribute('data-fbk')) return;
+        if (hasCanvas(e) || !small(e)) return;
+        hide(e);
+      });
+    });
+    m.querySelectorAll('button,[role="button"],a').forEach(function(e){
+      if (e === g) return;
+      if (g && (e.contains(g) || g.contains(e))) return;
+      if (e.getAttribute('data-fbk')) return;
+      if (hasCanvas(e) || !small(e)) return;
+      if (!g && !otherRe.test(attr(e))) return;
+      hide(e);
+    });
   }
   run();
-  if (window.__fbB) return;
-  var n = 0;
-  window.__fbB = setInterval(function(){
+  if (window.__fbT) return;
+  var n = 0, last = 0;
+  window.__fbT = setInterval(function(){
     n++; run();
-    if (n >= 24){ clearInterval(window.__fbB); window.__fbB = null; }
-  }, 500);
+    if (n >= 30){ clearInterval(window.__fbT); window.__fbT = null; }
+  }, 600);
+  try {
+    new MutationObserver(function(){
+      var t = Date.now();
+      if (t - last < 500) return;
+      last = t; run();
+    }).observe(document.body, {childList: true});
+  } catch(x){}
 })();
 ''';
 
@@ -81,9 +151,9 @@ class _WebPageState extends State<WebPage> {
         onProgress: (v) { if (mounted) setState(() => p = v / 100); },
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
-          if (widget.args.bannerOnly) {
+          if (widget.args.bannerOnly || widget.args.geoOnly) {
             try {
-              await c.runJavaScript(_bannerJs);
+              await c.runJavaScript(_mapJs(widget.args.geoOnly));
             } catch (_) {}
           }
           if (widget.args.clean) _waitForm();

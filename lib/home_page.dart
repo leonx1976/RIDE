@@ -47,7 +47,7 @@ class HomePage extends StatelessWidget {
             subtitle: 'Автобусы и троллейбусы онлайн',
             onTap: () => Navigator.pushNamed(context, '/web',
                 arguments: WebArgs(kTrafficMap, 'Движение транспорта',
-                    bare: true, bannerOnly: true)),
+                    bare: true, geoOnly: true)),
           ),
           Tile(
             icon: Icons.credit_card_rounded,

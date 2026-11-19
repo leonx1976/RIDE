@@ -167,6 +167,7 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
         return LatLng((c[0] as num).toDouble(), (c[1] as num).toDouble());
       }).toList();
     }
+    if (dirs.isEmpty) continue;
     out[id] = dirs;
   }
   return out;
@@ -250,10 +251,9 @@ double _mercY(double lat) {
   final availH = math.max(80.0, size.height - 160);
   final lonFrac = (e - w) / 360.0;
   final latFrac = (_mercY(s) - _mercY(n)).abs();
-  var zoom = 16.0;
   final zx = lonFrac > 1e-9 ? math.log(availW / (256.0 * lonFrac)) / math.ln2 : 99.0;
   final zy = latFrac > 1e-9 ? math.log(availH / (256.0 * latFrac)) / math.ln2 : 99.0;
-  zoom = math.min(zx, zy);
+  var zoom = math.min(zx, zy);
   if (!zoom.isFinite) zoom = 15.0;
   return (center: center, zoom: zoom.clamp(3.0, 17.0));
 }
@@ -412,29 +412,38 @@ class _RouteMapPageState extends State<RouteMapPage> {
   Size _size = const Size(400, 700);
   List<LatLng> _direct = [];
   List<LatLng> _back = [];
+  ({LatLng center, double zoom})? _cam;
+  int _failuresAtStart = 0;
+  bool _healScheduled = false;
 
   @override
   void initState() {
     super.initState();
+    _failuresAtStart = tileFailures;
     tileRoot();
-    for (final ms in [2500, 6000, 11000]) {
-      Future.delayed(Duration(milliseconds: ms), () {
-        if (!mounted) return;
-        setState(() {
-          _epoch++;
-          _tiles = CachedTileProvider();
-        });
+  }
+
+  /// Пересоздаём слой тайлов только если реально были сбои загрузки.
+  void _scheduleHeal() {
+    if (_healScheduled) return;
+    _healScheduled = true;
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      if (tileFailures <= _failuresAtStart) return;
+      setState(() {
+        _epoch++;
+        _tiles = CachedTileProvider();
       });
-    }
+    });
   }
 
   void _refit() {
+    final pts = [..._direct, if (_showBack) ..._back];
+    _cam = _cameraFor(pts, _size);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final pts = [..._direct, if (_showBack) ..._back];
-      final cam = _cameraFor(pts, _size);
       try {
-        _map.move(cam.center, cam.zoom);
+        _map.move(_cam!.center, _cam!.zoom);
       } catch (_) {}
     });
   }
@@ -512,17 +521,37 @@ class _RouteMapPageState extends State<RouteMapPage> {
           }
           final dirs = s.data![widget.route.id];
           if (dirs == null || dirs.isEmpty) {
-            return Center(child: Text('Для этого маршрута нет схемы',
-                style: context.t.bodyMedium));
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.route_rounded, size: 40, color: context.c.onSurfaceVariant),
+                  const SizedBox(height: 12),
+                  Text(widget.route.name,
+                      style: context.t.titleMedium, textAlign: TextAlign.center),
+                  const SizedBox(height: 8),
+                  Text('Источник не отдаёт трек этого маршрута, '
+                      'поэтому схему нарисовать нечем. '
+                      'Остальные маршруты работают.',
+                      textAlign: TextAlign.center, style: context.t.bodySmall),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('К списку маршрутов')),
+                ]),
+              ),
+            );
           }
           _direct = dirs['direct'] ?? <LatLng>[];
           _back = dirs['back'] ?? <LatLng>[];
           final all = [..._direct, if (_showBack) ..._back];
           _resolveDesc(_direct);
+          _scheduleHeal();
           final lineColor = _kindColor(_kind(widget.route.name));
           return LayoutBuilder(builder: (context, c) {
             _size = Size(c.maxWidth, c.maxHeight);
-            final cam = _cameraFor(all, _size);
+            _cam ??= _cameraFor(all, _size);
+            final cam = _cam!;
             return Stack(children: [
               FlutterMap(
                 mapController: _map,

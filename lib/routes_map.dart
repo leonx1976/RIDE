@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -68,7 +69,7 @@ Future<Map<String, String>> loadRouteDescriptions({bool force = false}) async {
     } catch (_) {}
   }
   final r = await http.get(Uri.parse(_descUrl),
-      headers: {'User-Agent': 'FamilyBox/1.2'}).timeout(const Duration(seconds: 25));
+      headers: {'User-Agent': 'FamilyBox/1.3'}).timeout(const Duration(seconds: 25));
   if (r.statusCode != 200) throw Exception('desc ${r.statusCode}');
   final html = utf8.decode(r.bodyBytes, allowMalformed: true);
   final out = <String, String>{};
@@ -115,7 +116,7 @@ Future<List<BusRoute>> loadBusRoutes({bool force = false}) async {
     } catch (_) {}
   }
   final r = await http.get(Uri.parse('$_busHost/'),
-      headers: {'User-Agent': 'FamilyBox/1.2'}).timeout(const Duration(seconds: 25));
+      headers: {'User-Agent': 'FamilyBox/1.3'}).timeout(const Duration(seconds: 25));
   if (r.statusCode != 200) throw Exception('site ${r.statusCode}');
   final html = utf8.decode(r.bodyBytes, allowMalformed: true);
   final re = RegExp(r'SetCurrentRoute\(this,\s*(\d+)\);">([^<]+)</a>');
@@ -142,7 +143,7 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
   if (body == null) {
     final r = await http.get(
         Uri.parse('$_busHost/default.aspx?target=main&action=get_polylines'),
-        headers: {'User-Agent': 'FamilyBox/1.2', 'Referer': '$_busHost/'})
+        headers: {'User-Agent': 'FamilyBox/1.3', 'Referer': '$_busHost/'})
         .timeout(const Duration(seconds: 40));
     if (r.statusCode != 200) throw Exception('polylines ${r.statusCode}');
     body = utf8.decode(r.bodyBytes, allowMalformed: true);
@@ -175,7 +176,7 @@ Future<String?> _reverseName(LatLng p) async {
   try {
     final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse'
         '?format=json&lat=${p.latitude}&lon=${p.longitude}&zoom=17&addressdetails=1');
-    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.2'})
+    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.3'})
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) return null;
     final j = jsonDecode(r.body) as Map<String, dynamic>;
@@ -228,6 +229,33 @@ String _kindTitle(int k) {
     case 2: return 'Маршрутные такси';
     default: return 'Автобусы';
   }
+}
+
+double _mercY(double lat) {
+  final r = lat * math.pi / 180.0;
+  return (1.0 - math.log(math.tan(r) + 1.0 / math.cos(r)) / math.pi) / 2.0;
+}
+
+({LatLng center, double zoom}) _cameraFor(List<LatLng> pts, Size size) {
+  if (pts.isEmpty) return (center: _kaluga, zoom: 13);
+  var s = pts.first.latitude, n = s, w = pts.first.longitude, e = w;
+  for (final p in pts) {
+    if (p.latitude < s) s = p.latitude;
+    if (p.latitude > n) n = p.latitude;
+    if (p.longitude < w) w = p.longitude;
+    if (p.longitude > e) e = p.longitude;
+  }
+  final center = LatLng((s + n) / 2, (w + e) / 2);
+  final availW = math.max(80.0, size.width - 60);
+  final availH = math.max(80.0, size.height - 160);
+  final lonFrac = (e - w) / 360.0;
+  final latFrac = (_mercY(s) - _mercY(n)).abs();
+  var zoom = 16.0;
+  final zx = lonFrac > 1e-9 ? math.log(availW / (256.0 * lonFrac)) / math.ln2 : 99.0;
+  final zy = latFrac > 1e-9 ? math.log(availH / (256.0 * latFrac)) / math.ln2 : 99.0;
+  zoom = math.min(zx, zy);
+  if (!zoom.isFinite) zoom = 15.0;
+  return (center: center, zoom: zoom.clamp(3.0, 17.0));
 }
 
 class RoutesListPage extends StatefulWidget {
@@ -286,7 +314,8 @@ class _RoutesListPageState extends State<RoutesListPage> {
                 Expanded(child: Text('Карта маршрутов', style: context.t.titleLarge)),
                 IconButton(
                     onPressed: () {
-                      loadRouteDescriptions(force: true).catchError((_) => <String, String>{});
+                      loadRouteDescriptions(force: true)
+                          .catchError((_) => <String, String>{});
                       setState(() => _f = loadBusRoutes(force: true));
                     },
                     icon: const Icon(Icons.refresh_rounded)),
@@ -380,6 +409,9 @@ class _RouteMapPageState extends State<RouteMapPage> {
   bool _showBack = true;
   bool _namesStarted = false;
   String? _desc;
+  Size _size = const Size(400, 700);
+  List<LatLng> _direct = [];
+  List<LatLng> _back = [];
 
   @override
   void initState() {
@@ -396,12 +428,23 @@ class _RouteMapPageState extends State<RouteMapPage> {
     }
   }
 
+  void _refit() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final pts = [..._direct, if (_showBack) ..._back];
+      final cam = _cameraFor(pts, _size);
+      try {
+        _map.move(cam.center, cam.zoom);
+      } catch (_) {}
+    });
+  }
+
   Future<void> _resolveDesc(List<LatLng> direct) async {
     if (_namesStarted) return;
     _namesStarted = true;
     final n = _numberOf(widget.route.name).split('/').first;
     final k = _kind(widget.route.name);
-    final tag = k == 0 ? 't' : (k == 1 ? 't' : 'b');
+    final tag = (k == 0 || k == 1) ? 't' : 'b';
     try {
       final map = await loadRouteDescriptions();
       final hit = map['$n|$tag'] ?? map['$n|'] ?? map[n];
@@ -460,9 +503,9 @@ class _RouteMapPageState extends State<RouteMapPage> {
                   const Text('Не удалось загрузить схему маршрута',
                       textAlign: TextAlign.center),
                   const SizedBox(height: 16),
-                  FilledButton(onPressed: () {
-                    setState(() => _f = loadPolylines(force: true));
-                  }, child: const Text('Повторить')),
+                  FilledButton(
+                      onPressed: () => setState(() => _f = loadPolylines(force: true)),
+                      child: const Text('Повторить')),
                 ]),
               ),
             );
@@ -472,94 +515,98 @@ class _RouteMapPageState extends State<RouteMapPage> {
             return Center(child: Text('Для этого маршрута нет схемы',
                 style: context.t.bodyMedium));
           }
-          final direct = dirs['direct'] ?? <LatLng>[];
-          final back = dirs['back'] ?? <LatLng>[];
-          final all = [...direct, if (_showBack) ...back];
-          _resolveDesc(direct);
+          _direct = dirs['direct'] ?? <LatLng>[];
+          _back = dirs['back'] ?? <LatLng>[];
+          final all = [..._direct, if (_showBack) ..._back];
+          _resolveDesc(_direct);
           final lineColor = _kindColor(_kind(widget.route.name));
-          final bounds = all.length > 1 ? LatLngBounds.fromPoints(all) : null;
-          return Stack(children: [
-            FlutterMap(
-              mapController: _map,
-              options: MapOptions(
-                initialCenter: all.isEmpty ? _kaluga : all.first,
-                initialZoom: 13,
-                initialCamera: bounds == null
-                    ? null
-                    : CameraFit.bounds(bounds: bounds,
-                        padding: const EdgeInsets.fromLTRB(30, 90, 30, 60)),
-              ),
-              children: [
-                TileLayer(
-                  key: ValueKey('tiles$_epoch'),
-                  urlTemplate: '$kTileHost/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'ru.family.family_box',
-                  tileProvider: _tiles,
-                  maxNativeZoom: 19,
+          return LayoutBuilder(builder: (context, c) {
+            _size = Size(c.maxWidth, c.maxHeight);
+            final cam = _cameraFor(all, _size);
+            return Stack(children: [
+              FlutterMap(
+                mapController: _map,
+                options: MapOptions(
+                  initialCenter: cam.center,
+                  initialZoom: cam.zoom,
+                  minZoom: 3,
+                  maxZoom: 18,
                 ),
-                PolylineLayer(polylines: [
-                  if (_showBack && back.length > 1)
-                    Polyline(points: back, color: const Color(0xFFE08A2E), strokeWidth: 4),
-                  if (direct.length > 1)
-                    Polyline(points: direct, color: lineColor, strokeWidth: 5),
-                ]),
-                MarkerLayer(markers: [
-                  if (direct.isNotEmpty)
-                    Marker(point: direct.first, width: 30, height: 30,
-                        alignment: Alignment.center,
-                        child: Icon(Icons.trip_origin, color: lineColor, size: 22)),
-                  if (direct.isNotEmpty)
-                    Marker(point: direct.last, width: 30, height: 30,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.flag_rounded,
-                            color: Color(0xFFD64545), size: 22)),
-                ]),
-              ],
-            ),
-            Positioned(
-              top: 8,
-              left: 12,
-              right: 12,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                decoration: BoxDecoration(
-                    color: context.c.surface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: context.c.outlineVariant)),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                  Expanded(
-                    child: Text(_desc ?? widget.route.name,
-                        style: context.t.titleMedium,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis),
+                children: [
+                  TileLayer(
+                    key: ValueKey('tiles$_epoch'),
+                    urlTemplate: '$kTileHost/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'ru.family.family_box',
+                    tileProvider: _tiles,
+                    maxNativeZoom: 19,
                   ),
-                  TextButton(
-                      onPressed: () => setState(() => _showBack = !_showBack),
-                      child: Text(_showBack ? 'Туда' : 'Оба')),
-                ]),
+                  PolylineLayer(polylines: [
+                    if (_showBack && _back.length > 1)
+                      Polyline(points: _back, color: const Color(0xFFE08A2E), strokeWidth: 4),
+                    if (_direct.length > 1)
+                      Polyline(points: _direct, color: lineColor, strokeWidth: 5),
+                  ]),
+                  MarkerLayer(markers: [
+                    if (_direct.isNotEmpty)
+                      Marker(point: _direct.first, width: 30, height: 30,
+                          alignment: Alignment.center,
+                          child: Icon(Icons.trip_origin, color: lineColor, size: 22)),
+                    if (_direct.isNotEmpty)
+                      Marker(point: _direct.last, width: 30, height: 30,
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.flag_rounded,
+                              color: Color(0xFFD64545), size: 22)),
+                  ]),
+                ],
               ),
-            ),
-            Positioned(
-              left: 12,
-              bottom: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                    color: context.c.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: context.c.outlineVariant)),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _legend(lineColor, 'прямое направление'),
-                  if (_showBack) _legend(const Color(0xFFE08A2E), 'обратное направление'),
-                ]),
+              Positioned(
+                top: 8,
+                left: 12,
+                right: 12,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                  decoration: BoxDecoration(
+                      color: context.c.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: context.c.outlineVariant)),
+                  child: Row(children: [
+                    Expanded(
+                      child: Text(_desc ?? widget.route.name,
+                          style: context.t.titleMedium,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    TextButton(
+                        onPressed: () {
+                          setState(() => _showBack = !_showBack);
+                          _refit();
+                        },
+                        child: Text(_showBack ? 'Туда' : 'Оба')),
+                  ]),
+                ),
               ),
-            ),
-            Positioned(
-                right: 8,
-                bottom: 4,
-                child: Text('© OpenStreetMap · bus40.su',
-                    style: TextStyle(fontSize: 10, color: context.c.onSurfaceVariant))),
-          ]);
+              Positioned(
+                left: 12,
+                bottom: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: context.c.surface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: context.c.outlineVariant)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    _legend(lineColor, 'прямое направление'),
+                    if (_showBack) _legend(const Color(0xFFE08A2E), 'обратное направление'),
+                  ]),
+                ),
+              ),
+              Positioned(
+                  right: 8,
+                  bottom: 4,
+                  child: Text('© OpenStreetMap · bus40.su',
+                      style: TextStyle(fontSize: 10, color: context.c.onSurfaceVariant))),
+            ]);
+          });
         },
       );
 

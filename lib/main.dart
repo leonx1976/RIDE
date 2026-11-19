@@ -10,6 +10,7 @@ import 'kaluga.dart';
 import 'navigator.dart';
 import 'routes_map.dart';
 import 'schedule_pages.dart';
+import 'weather.dart';
 import 'web_page.dart';
 
 final navKey = GlobalKey<NavigatorState>();
@@ -175,6 +176,7 @@ class Shell extends StatelessWidget {
                   onGenerateRoute: (s) {
                     Widget page;
                     switch (s.name) {
+                      case '/weather':  page = const WeatherPage(); break;
                       case '/schedule': page = const ScheduleMenuPage(); break;
                       case '/station':  page = StationPage(src: s.arguments as KalugaSource); break;
                       case '/card':     page = const CardPage(); break;

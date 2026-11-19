@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -10,7 +11,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 
 const kTileHost = 'https://tile.openstreetmap.org';
-const kTileUa = 'FamilyBox/1.1 (personal family app)';
+const kTileUa = 'FamilyBox/1.2 (personal family app)';
+const int kMaxParallel = 4;
 
 Directory? _root;
 Future<Directory> tileRoot() async {
@@ -24,25 +26,57 @@ Future<Directory> tileRoot() async {
 
 final http.Client tileClient = http.Client();
 
+int _active = 0;
+final List<Completer<void>> _queue = [];
+
+Future<void> _acquire() async {
+  if (_active < kMaxParallel) {
+    _active++;
+    return;
+  }
+  final c = Completer<void>();
+  _queue.add(c);
+  await c.future;
+  _active++;
+}
+
+void _release() {
+  _active--;
+  if (_active < 0) _active = 0;
+  if (_queue.isNotEmpty) {
+    final c = _queue.removeAt(0);
+    if (!c.isCompleted) c.complete();
+  }
+}
+
 Future<Uint8List?> fetchTile(int z, int x, int y) async {
   final root = await tileRoot();
   final f = File('${root.path}/$z/$x/$y.png');
   if (await f.exists()) {
     try {
-      return await f.readAsBytes();
+      final b = await f.readAsBytes();
+      if (b.isNotEmpty) return b;
     } catch (_) {}
   }
+  await _acquire();
   try {
-    final r = await tileClient.get(Uri.parse('$kTileHost/$z/$x/$y.png'),
-        headers: {'User-Agent': kTileUa}).timeout(const Duration(seconds: 15));
-    if (r.statusCode == 200 && r.bodyBytes.isNotEmpty) {
+    for (var attempt = 0; attempt < 3; attempt++) {
       try {
-        await f.parent.create(recursive: true);
-        await f.writeAsBytes(r.bodyBytes);
+        final r = await tileClient.get(Uri.parse('$kTileHost/$z/$x/$y.png'),
+            headers: {'User-Agent': kTileUa}).timeout(const Duration(seconds: 20));
+        if (r.statusCode == 200 && r.bodyBytes.isNotEmpty) {
+          try {
+            await f.parent.create(recursive: true);
+            await f.writeAsBytes(r.bodyBytes);
+          } catch (_) {}
+          return r.bodyBytes;
+        }
       } catch (_) {}
-      return r.bodyBytes;
+      await Future.delayed(Duration(milliseconds: 300 + attempt * 500));
     }
-  } catch (_) {}
+  } finally {
+    _release();
+  }
   return null;
 }
 
@@ -141,7 +175,7 @@ class AreaDownload {
         progress(done, list.length);
       }
     }
-    await Future.wait([worker(), worker(), worker(), worker()]);
+    await Future.wait([worker(), worker(), worker()]);
   }
 }
 

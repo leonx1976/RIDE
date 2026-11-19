@@ -12,114 +12,49 @@ class WebArgs {
       {this.clean = false,
       this.waitReady = false,
       this.bare = false,
-      this.mapOnly = false,
-      this.stripControls = false});
+      this.bannerOnly = false});
   final String url, title;
   final bool clean;
   final bool waitReady;
   final bool bare;
-  final bool mapOnly;
-  final bool stripControls;
+  final bool bannerOnly;
 }
 
-String _isoJs(bool strip) => '''
+const String _bannerJs = r'''
 (function(){
-  var STRIP = ${strip ? 'true' : 'false'};
-  function area(e){ try { return e.offsetWidth * e.offsetHeight; } catch(x){ return 0; } }
-  function need(){ return window.innerWidth * window.innerHeight * 0.30; }
-  function find(){
-    var sels = ['[class*="map-container"]','[class*="map-view"]','[class*="map__"]',
-                '[class*="ymaps"]','[id*="map"]','[class*="map"]'];
-    for (var i=0;i<sels.length;i++){
-      var l = document.querySelectorAll(sels[i]);
-      for (var j=0;j<l.length;j++){ if (area(l[j]) >= need()) return l[j]; }
-    }
-    var cs = document.querySelectorAll('canvas'), best = null, ba = 0;
-    for (var k=0;k<cs.length;k++){ var a = area(cs[k]); if (a > ba){ ba = a; best = cs[k]; } }
-    if (best && ba >= need()) return best.parentElement || best;
-    return null;
-  }
   function hide(e){
     if (!e || e.getAttribute('data-fbh')) return;
     try { e.setAttribute('data-fbh','1'); e.style.setProperty('display','none','important'); } catch(x){}
   }
-  function flat(e){
-    if (!e || e.getAttribute('data-fbf')) return;
-    try {
-      e.setAttribute('data-fbf','1');
-      e.style.setProperty('margin','0','important');
-      e.style.setProperty('padding','0','important');
-    } catch(x){}
-  }
-  function outside(e,m){ return e !== m && !e.contains(m) && !m.contains(e); }
-  function inside(e,m){ return e !== m && m.contains(e) && !e.querySelector('canvas'); }
+  function hasCanvas(e){ try { return !!e.querySelector('canvas'); } catch(x){ return false; } }
+  function small(e){ try { return e.offsetHeight > 0 && e.offsetHeight <= 220; } catch(x){ return false; } }
+  var KEYS = ['banner','advert','promo','install','smart','subscription','onboarding',
+              'cookie','notice','popup','modal','disclaimer','story','share','social',
+              'header','footer','sidebar','topbar','app-bar'];
+  var TXT = /^(скачать|установить|продолжить в приложении|открыть в приложении|открыть приложение|подробнее|не сейчас|позже)$/i;
   function run(){
-    var m = find();
-    if (!m) return;
-    var node = m;
-    while (node && node !== document.body && node !== document.documentElement){
-      var p = node.parentElement;
-      if (!p) break;
-      for (var i=0;i<p.children.length;i++){
-        var s = p.children[i];
-        if (s !== node && !s.contains(m)) hide(s);
-      }
-      flat(p);
-      node = p;
-    }
-    var chrome = ['advert','banner','promo','install','subscription','onboarding','popup',
-                  'modal','cookie','notice','header','footer','sidebar','tabs','story',
-                  'disclaimer','share','social'];
-    chrome.forEach(function(k){
+    KEYS.forEach(function(k){
       document.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
-        if (outside(e,m)) hide(e);
+        if (!hasCanvas(e) && small(e)) hide(e);
       });
     });
-    document.querySelectorAll('h1,h2').forEach(function(e){ if (outside(e,m)) hide(e); });
-    if (STRIP){
-      var ctrl = ['zoom','controls','control','button','btn','panel','tooltip','hint',
-                  'legend','attrib','copyright','search','menu','ruler','settings'];
-      ctrl.forEach(function(k){
-        document.querySelectorAll('[class*="' + k + '"]').forEach(function(e){
-          if (inside(e,m)) hide(e);
-        });
-      });
-    }
-    try {
-      var de = document.documentElement, b = document.body;
-      de.style.setProperty('margin','0','important');
-      de.style.setProperty('overflow','hidden','important');
-      b.style.setProperty('margin','0','important');
-      b.style.setProperty('padding','0','important');
-      b.style.setProperty('overflow','hidden','important');
-    } catch(x){}
-    if (m.getAttribute('data-fbp') !== '1'){
-      try {
-        m.setAttribute('data-fbp','1');
-        m.style.setProperty('position','fixed','important');
-        m.style.setProperty('left','0','important');
-        m.style.setProperty('top','0','important');
-        m.style.setProperty('right','0','important');
-        m.style.setProperty('bottom','0','important');
-        m.style.setProperty('width','100%','important');
-        m.style.setProperty('height','100%','important');
-        m.style.setProperty('margin','0','important');
-        m.style.setProperty('z-index','1','important');
-      } catch(x){}
-      if (!window.__fbResized){
-        window.__fbResized = true;
-        try { window.dispatchEvent(new Event('resize')); } catch(x){}
+    document.querySelectorAll('a,button,[role="button"]').forEach(function(e){
+      var t = (e.textContent || '').trim();
+      if (t.length > 40 || !TXT.test(t)) return;
+      var p = e;
+      for (var i = 0; i < 5 && p; i++){
+        if (small(p) && !hasCanvas(p)) { hide(p); break; }
+        p = p.parentElement;
       }
-    }
+    });
   }
   run();
-  if (window.__fbTimer) return;
+  if (window.__fbB) return;
   var n = 0;
-  window.__fbTimer = setInterval(function(){
-    n++;
-    run();
-    if (n >= 14){ clearInterval(window.__fbTimer); window.__fbTimer = null; }
-  }, 450);
+  window.__fbB = setInterval(function(){
+    n++; run();
+    if (n >= 24){ clearInterval(window.__fbB); window.__fbB = null; }
+  }, 500);
 })();
 ''';
 
@@ -146,9 +81,9 @@ class _WebPageState extends State<WebPage> {
         onProgress: (v) { if (mounted) setState(() => p = v / 100); },
         onPageStarted: (_) => WebNav.instance.refresh(),
         onPageFinished: (_) async {
-          if (widget.args.mapOnly) {
+          if (widget.args.bannerOnly) {
             try {
-              await c.runJavaScript(_isoJs(widget.args.stripControls));
+              await c.runJavaScript(_bannerJs);
             } catch (_) {}
           }
           if (widget.args.clean) _waitForm();

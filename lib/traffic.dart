@@ -501,44 +501,62 @@ class _TrafficPageState extends State<TrafficPage> with TickerProviderStateMixin
     final color = _kindColor(v.kind);
     final sel = _selected?.id == v.id;
     final h = v.heading;
+
+    const textStyle = TextStyle(
+      color: Colors.white,
+      fontSize: 11.5,
+      fontWeight: FontWeight.w800,
+      height: 1.1,
+    );
+
+    Widget badgeChild;
+    if (_labels) {
+      badgeChild = Text(v.label, textAlign: TextAlign.center, style: textStyle);
+    } else {
+      badgeChild = const SizedBox(width: 8, height: 8);
+    }
+
+    final badge = Container(
+      padding: EdgeInsets.symmetric(horizontal: _labels ? 7 : 0, vertical: 3),
+      constraints: BoxConstraints(minWidth: _labels ? 26 : 16),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(_labels ? 9 : 20),
+        border: Border.all(color: Colors.white, width: sel ? 2.6 : 1.6),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(sel ? .8 : .45),
+            blurRadius: sel ? 14 : 6,
+            spreadRadius: sel ? 1.5 : 0,
+          ),
+        ],
+      ),
+      child: badgeChild,
+    );
+
+    final layers = <Widget>[];
+    if (h != null) {
+      layers.add(
+        Transform.rotate(
+          angle: h * math.pi / 180,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 22),
+            child: Icon(Icons.play_arrow_rounded, size: 20, color: color),
+          ),
+        ),
+      );
+    }
+    layers.add(badge);
+
     return GestureDetector(
       onTap: () => setState(() => _selected = v),
       child: Transform.rotate(
         angle: -rot * math.pi / 180,
-        child: Stack(alignment: Alignment.center, children: [
-          if (h != null)
-            Transform.rotate(
-              angle: h * math.pi / 180,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 22),
-                child: Icon(Icons.play_arrow_rounded, size: 20, color: color),
-              ),
-            ),
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: _labels ? 7 : 0, vertical: 3),
-            constraints: BoxConstraints(minWidth: _labels ? 26 : 16),
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(_labels ? 9 : 20),
-              border: Border.all(color: Colors.white, width: sel ? 2.6 : 1.6),
-              boxShadow: [
-                BoxShadow(
-                    color: color.withOpacity(sel ? .8 : .45),
-                    blurRadius: sel ? 14 : 6, spreadRadius: sel ? 1.5 : 0),
-              ],
-            ),
-            child: _labels
-                ? Text(v.label,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 11.5,
-                        fontWeight: FontWeight.w800, height: 1.1
-                : const SizedBox(width: 8, height: 8),
-          ),
-        ]),
+        child: Stack(alignment: Alignment.center, children: layers),
       ),
     );
   }
+
 
   Widget _pingMarker() {
     final t = _pingAnim.value;

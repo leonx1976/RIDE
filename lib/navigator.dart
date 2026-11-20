@@ -488,30 +488,32 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
   Widget _meMarker(double rot) {
     final h = CompassService.instance.heading ?? _myHeading;
     final t = _pulse.value;
-    return Stack(alignment: Alignment.center, children: [
-      Container(
-        width: 20 + 34 * t, height: 20 + 34 * t,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF2F80ED).withOpacity(.22 * (1 - t)),
-        ),
+    final children = <Widget>[];
+    children.add(Container(
+      width: 18 + 30 * t,
+      height: 18 + 30 * t,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2F80ED).withOpacity(.16 * (1 - t)),
       ),
-      if (h != null)
-        Transform.rotate(
-          angle: (h + rot) * math.pi / 180,
-          child: Icon(Icons.navigation_rounded,
-              size: 34, color: const Color(0xFF2F80ED).withOpacity(.45)),
-        ),
-      Container(
-        width: 18, height: 18,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF2F80ED),
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(.3), blurRadius: 5)],
-        ),
+    ));
+    if (h != null) {
+      children.add(Transform.rotate(
+        angle: (h + rot) * math.pi / 180,
+        child: CustomPaint(size: const Size(62, 62), painter: _HeadingCone()),
+      ));
+    }
+    children.add(Container(
+      width: 18,
+      height: 18,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2F80ED),
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.35), blurRadius: 6)],
       ),
-    ]);
+    ));
+    return Stack(alignment: Alignment.center, children: children);
   }
 
   Widget _roundBtn(IconData icon, String tip, VoidCallback onTap, {Color? accent}) {

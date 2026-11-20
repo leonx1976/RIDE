@@ -4,8 +4,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'main.dart';
 import 'web_page.dart';
 
-const kTrafficMap =
-    'https://yandex.ru/maps/6/kaluga/transport/?l=sat%2Cskl&ll=36.251580%2C54.517620&z=16';
 const kRuStoreNavi = 'https://www.rustore.ru/catalog/app/ru.yandex.yandexnavi';
 
 class HomePage extends StatelessWidget {
@@ -25,7 +23,7 @@ class HomePage extends StatelessWidget {
           Tile(
             icon: Icons.navigation_rounded,
             title: 'Навигатор',
-            subtitle: 'Пешеходный · работает офлайн',
+            subtitle: 'Пешеходный · офлайн · компас',
             onTap: () => Navigator.pushNamed(context, '/navi'),
             onLongPress: () => openYandexNavi(context),
           ),
@@ -44,10 +42,8 @@ class HomePage extends StatelessWidget {
           Tile(
             icon: Icons.commute_rounded,
             title: 'Движение транспорта',
-            subtitle: 'Автобусы и троллейбусы онлайн',
-            onTap: () => Navigator.pushNamed(context, '/web',
-                arguments: WebArgs(kTrafficMap, 'Движение транспорта',
-                    bare: true, geoOnly: true)),
+            subtitle: 'Живые машины на нашей карте',
+            onTap: () => Navigator.pushNamed(context, '/traffic'),
           ),
           Tile(
             icon: Icons.credit_card_rounded,

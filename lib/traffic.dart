@@ -237,20 +237,18 @@ class _TrafficPageState extends State<TrafficPage> with TickerProviderStateMixin
     if (!svc.autoOrient) return;
     final h = svc.heading;
     if (h == null) return;
-    var d = (h - _lastApplied).abs();
+    var d = (h - _lastApplied) % 360;
+    if (d < 0) d += 360;
     if (d > 180) d = 360 - d;
-    if (d < 1.2) return;
+    if (_lastApplied > -360 && d < 1.0) return;
     _lastApplied = h;
-    try { _map.rotate(-h); _rot.value = -h; } catch (_) {}
-  }
-
-  Future<void> _bootstrap() async {
-    try {
-      final list = await loadBusRoutes();
-      _names = {for (final r in list) r.id: r.name};
-    } catch (_) {}
-    await _refresh();
-    _restartTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        _map.rotate(-h);
+        _rot.value = _map.camera.rotation;
+      } catch (_) {}
+    });
   }
 
   void _restartTimer() {

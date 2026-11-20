@@ -631,3 +631,29 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
             color: context.c.onSurface)),
       ]);
 }
+
+
+class _HeadingCone extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final r = size.width / 2;
+    final path = Path()
+      ..moveTo(cx, cy - r + 2)
+      ..lineTo(cx - r * 0.30, cy - r * 0.34)
+      ..lineTo(cx + r * 0.30, cy - r * 0.34)
+      ..close();
+    canvas.drawPath(path, Paint()..color = const Color(0xFF2F80ED));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HeadingCone oldDelegate) => false;
+}

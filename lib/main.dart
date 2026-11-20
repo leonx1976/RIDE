@@ -5,11 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'compass.dart';
 import 'home_page.dart';
 import 'kaluga.dart';
 import 'navigator.dart';
 import 'routes_map.dart';
 import 'schedule_pages.dart';
+import 'traffic.dart';
 import 'weather.dart';
 import 'web_page.dart';
 
@@ -76,6 +78,7 @@ ThemeData buildTheme(Brightness b) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ThemeCtrl.instance.load();
+  await CompassService.instance.load();
   runApp(const FamilyApp());
 }
 
@@ -183,6 +186,7 @@ class Shell extends StatelessWidget {
                       case '/navi':     page = const NaviPage(); break;
                       case '/routes':   page = const RoutesListPage(); break;
                       case '/routemap': page = RouteMapPage(route: s.arguments as BusRoute); break;
+                      case '/traffic':  page = const TrafficPage(); break;
                       case '/web':      page = WebPage(args: s.arguments as WebArgs); break;
                       default:          page = const HomePage();
                     }

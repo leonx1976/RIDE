@@ -313,7 +313,7 @@ class CompassRose extends StatelessWidget {
 class _RosePainter extends CustomPainter {
   _RosePainter({required this.rotation, required this.active,
       required this.tick, required this.label});
-  final double rotation, ;
+  final double rotation;
   final bool active;
   final Color tick, label;
 

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
+import 'compass.dart';
 import 'main.dart';
 import 'tiles.dart';
 
@@ -28,13 +30,18 @@ class NaviPage extends StatefulWidget {
   State<NaviPage> createState() => _NaviPageState();
 }
 
-class _NaviPageState extends State<NaviPage> {
+class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
   final MapController _map = MapController();
   final TextEditingController _searchCtrl = TextEditingController();
   final CachedTileProvider _tiles = CachedTileProvider();
+  final ValueNotifier<double> _rot = ValueNotifier(0);
   StreamSubscription<Position>? _posSub;
+  late final AnimationController _pulse =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))
+        ..repeat();
 
   LatLng? _me;
+  double? _myHeading;
   LatLng? _dest;
   String _destName = '';
   List<LatLng> _route = [];
@@ -43,23 +50,47 @@ class _NaviPageState extends State<NaviPage> {
   bool _busy = false;
   bool _locDenied = false;
   bool _offlineMode = false;
+  bool _follow = false;
   double? _bearing;
   List<NominatimPlace> _results = [];
   int _cached = 0;
+  double _lastApplied = -999;
 
   @override
   void initState() {
     super.initState();
     tileRoot();
+    CompassService.instance.acquire();
+    CompassService.instance.addListener(_onCompass);
     _initLocation();
     cachedTileCount().then((n) { if (mounted) setState(() => _cached = n); });
   }
 
   @override
   void dispose() {
+    CompassService.instance.removeListener(_onCompass);
+    CompassService.instance.release();
     _posSub?.cancel();
     _searchCtrl.dispose();
+    _pulse.dispose();
+    _rot.dispose();
     super.dispose();
+  }
+
+  void _onCompass() {
+    if (!mounted) return;
+    final svc = CompassService.instance;
+    if (!svc.autoOrient) return;
+    final h = svc.heading;
+    if (h == null) return;
+    var delta = (h - _lastApplied).abs();
+    if (delta > 180) delta = 360 - delta;
+    if (delta < 1.2) return;
+    _lastApplied = h;
+    try {
+      _map.rotate(-h);
+      _rot.value = -h;
+    } catch (_) {}
   }
 
   void _snack(String msg, {bool error = false}) {
@@ -81,17 +112,29 @@ class _NaviPageState extends State<NaviPage> {
         return;
       }
       if (mounted) setState(() => _locDenied = false);
-      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       if (!mounted) return;
-      setState(() => _me = LatLng(pos.latitude, pos.longitude));
-      _map.move(_me!, 15);
+      setState(() {
+        _me = LatLng(pos.latitude, pos.longitude);
+        _myHeading = pos.heading;
+      });
+      CompassService.instance.setGpsCourse(pos.heading, pos.speed);
+      _map.move(_me!, 16);
       await _posSub?.cancel();
       _posSub = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium, distanceFilter: 5),
+        locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high, distanceFilter: 4),
       ).listen((pos) {
         if (!mounted) return;
-        setState(() => _me = LatLng(pos.latitude, pos.longitude));
-        if (_offlineMode && _dest != null) _straightLine();
+        setState(() {
+          _me = LatLng(pos.latitude, pos.longitude);
+          _myHeading = pos.heading;
+        });
+        CompassService.instance.setGpsCourse(pos.heading, pos.speed);
+        if (_follow && _me != null) {
+          try { _map.move(_me!, _map.camera.zoom); } catch (_) {}
+        }
+        if (_offlineMode && _dest != null) setState(_straightLine);
       });
     } catch (_) {
       if (mounted) setState(() => _locDenied = true);
@@ -99,7 +142,7 @@ class _NaviPageState extends State<NaviPage> {
   }
 
   void _onMapTap(TapPosition _, LatLng point) {
-    setState(() { _dest = point; _destName = 'Выбранная точка'; });
+    setState(() { _dest = point; _destName = 'Выбранная точка'; _results = []; });
     _buildRoute();
   }
 
@@ -112,7 +155,7 @@ class _NaviPageState extends State<NaviPage> {
         'q': q, 'format': 'json', 'limit': '6', 'countrycodes': 'ru',
         'viewbox': '35.4,54.95,37.2,54.05', 'bounded': '0',
       });
-      final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.1'})
+      final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.4'})
           .timeout(const Duration(seconds: 20));
       if (r.statusCode == 200 && mounted) {
         final list = jsonDecode(r.body) as List;
@@ -125,7 +168,7 @@ class _NaviPageState extends State<NaviPage> {
         setState(() {});
       }
     } catch (_) {
-      _snack('Поиск недоступен без интернета. Отметьте цель тапом по карте.', error: true);
+      _snack('Поиск недоступен без интернета. Отметь цель тапом по карте.', error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -152,7 +195,7 @@ class _NaviPageState extends State<NaviPage> {
     _offlineMode = true;
   }
 
-  String _compass(double b) {
+  String _compassName(double b) {
     const dirs = ['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ'];
     return dirs[((b % 360) / 45).round() % 8];
   }
@@ -185,7 +228,7 @@ class _NaviPageState extends State<NaviPage> {
         'directions_options': {'units': 'kilometers'},
       });
       final r = await http.post(Uri.parse(_valhalla),
-          headers: {'Content-Type': 'application/json', 'User-Agent': 'FamilyBox/1.1'},
+          headers: {'Content-Type': 'application/json', 'User-Agent': 'FamilyBox/1.4'},
           body: body).timeout(const Duration(seconds: 15));
       if (r.statusCode != 200 || !mounted) return false;
       final j = jsonDecode(r.body) as Map<String, dynamic>;
@@ -199,16 +242,14 @@ class _NaviPageState extends State<NaviPage> {
       setState(() {});
       _fitRoute();
       return true;
-    } catch (_) {
-      return false;
-    }
+    } catch (_) { return false; }
   }
 
   Future<bool> _viaOsrm(LatLng a, LatLng b) async {
     try {
       final c = '${a.longitude},${a.latitude};${b.longitude},${b.latitude}';
       final uri = Uri.parse('$_osrm/$c?overview=full&geometries=geojson&steps=false');
-      final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.1'})
+      final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.4'})
           .timeout(const Duration(seconds: 15));
       if (r.statusCode != 200 || !mounted) return false;
       final j = jsonDecode(r.body) as Map<String, dynamic>;
@@ -227,15 +268,16 @@ class _NaviPageState extends State<NaviPage> {
       setState(() {});
       _fitRoute();
       return true;
-    } catch (_) {
-      return false;
-    }
+    } catch (_) { return false; }
   }
 
   void _fitRoute() {
     if (_route.length < 2) return;
-    _map.fitCamera(CameraFit.bounds(
-        bounds: LatLngBounds.fromPoints(_route), padding: const EdgeInsets.all(70)));
+    try {
+      _map.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(_route),
+          padding: const EdgeInsets.fromLTRB(40, 110, 40, 190)));
+    } catch (_) {}
   }
 
   void _clearRoute() {
@@ -247,7 +289,8 @@ class _NaviPageState extends State<NaviPage> {
 
   void _recenter() {
     if (_me != null) {
-      _map.move(_me!, 15);
+      try { _map.move(_me!, 16); } catch (_) {}
+      setState(() => _follow = true);
     } else {
       _initLocation();
     }
@@ -279,117 +322,229 @@ class _NaviPageState extends State<NaviPage> {
   Future<void> _downloadDialog() async {
     final area = AreaDownload(_citySW, _cityNE, [12, 13, 14, 15, 16]);
     final total = area.total();
-    var done = 0;
-    var cancelled = false;
-    var running = true;
+    var done = 0, cancelled = false, running = true;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) {
-          if (running) {
-            running = false;
-            area.run((d, t) {
-              if (ctx.mounted) setS(() => done = d);
-            }, () => cancelled).then((_) {
-              if (ctx.mounted) setS(() {});
-              cachedTileCount().then((n) { if (mounted) setState(() => _cached = n); });
-            });
-          }
-          final finished = done >= total || cancelled;
-          return AlertDialog(
-            title: const Text('Офлайн-карта Калуги'),
-            content: Column(mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Файлов: $done из $total', style: context.t.bodyMedium),
-              const SizedBox(height: 12),
-              LinearProgressIndicator(value: total == 0 ? 0 : done / total),
-              const SizedBox(height: 12),
-              Text(finished
-                  ? (cancelled ? 'Остановлено. Скачанное сохранено.' : 'Готово. Карта работает без интернета.')
-                  : 'Лучше по Wi-Fi. Около 50 МБ, несколько минут.',
-                  style: context.t.bodySmall),
-            ]),
-            actions: [
-              if (finished)
-                FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть'))
-              else
-                TextButton(onPressed: () { cancelled = true; Navigator.pop(ctx); },
-                    child: const Text('Остановить')),
-            ],
-          );
-        },
-      ),
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
+        if (running) {
+          running = false;
+          area.run((d, t) { if (ctx.mounted) setS(() => done = d); }, () => cancelled)
+              .then((_) {
+            if (ctx.mounted) setS(() {});
+            cachedTileCount().then((n) { if (mounted) setState(() => _cached = n); });
+          });
+        }
+        final finished = done >= total || cancelled;
+        return AlertDialog(
+          title: const Text('Офлайн-карта Калуги'),
+          content: Column(mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Файлов: $done из $total', style: context.t.bodyMedium),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: total == 0 ? 0 : done / total, minHeight: 8,
+                backgroundColor: context.c.outlineVariant,
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF3FA85F)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(finished
+                ? (cancelled ? 'Остановлено. Скачанное сохранено.'
+                             : 'Готово. Карта работает без интернета.')
+                : 'Лучше по Wi-Fi. Около 50 МБ, несколько минут.',
+                style: context.t.bodySmall),
+          ]),
+          actions: [
+            if (finished)
+              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть'))
+            else
+              TextButton(onPressed: () { cancelled = true; Navigator.pop(ctx); },
+                  child: const Text('Остановить')),
+          ],
+        );
+      }),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(children: [
-      FlutterMap(
-        mapController: _map,
-        options: MapOptions(initialCenter: _kaluga, initialZoom: 13, onTap: _onMapTap),
-        children: [
-          TileLayer(
-            urlTemplate: '$kTileHost/{z}/{x}/{y}.png',
-            userAgentPackageName: 'ru.family.family_box',
-            tileProvider: _tiles,
-            maxNativeZoom: 19,
+    final svc = CompassService.instance;
+    return AnimatedBuilder(
+      animation: Listenable.merge([svc, _pulse]),
+      builder: (context, _) {
+        final auto = svc.autoOrient;
+        return Stack(children: [
+          FlutterMap(
+            mapController: _map,
+            options: MapOptions(
+              initialCenter: _kaluga,
+              initialZoom: 14,
+              minZoom: 3,
+              maxZoom: 18,
+              onTap: _onMapTap,
+              onPositionChanged: (cam, _) => _rot.value = cam.rotation,
+              interactionOptions: InteractionOptions(
+                flags: auto
+                    ? (InteractiveFlag.all & ~InteractiveFlag.rotate)
+                    : InteractiveFlag.all,
+              ),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: '$kTileHost/{z}/{x}/{y}.png',
+                userAgentPackageName: 'ru.family.family_box',
+                tileProvider: _tiles,
+                maxNativeZoom: 19,
+              ),
+              if (_route.isNotEmpty)
+                PolylineLayer(polylines: [
+                  Polyline(points: _route,
+                      color: _offlineMode ? const Color(0xFFE08A2E) : const Color(0xFF2F80ED),
+                      strokeWidth: 6),
+                ]),
+              ValueListenableBuilder<double>(
+                valueListenable: _rot,
+                builder: (context, rot, __) => MarkerLayer(markers: [
+                  if (_me != null)
+                    Marker(
+                      point: _me!, width: 62, height: 62, alignment: Alignment.center,
+                      child: _meMarker(rot),
+                    ),
+                  if (_dest != null)
+                    Marker(
+                      point: _dest!, width: 46, height: 46,
+                      alignment: Alignment.bottomCenter,
+                      child: Transform.rotate(
+                        angle: -rot * math.pi / 180,
+                        child: const Icon(Icons.place_rounded,
+                            color: Color(0xFFD62828), size: 42),
+                      ),
+                    ),
+                ]),
+              ),
+            ],
           ),
+          Positioned(left: 10, bottom: 6,
+              child: Text('© OpenStreetMap · офлайн: $_cached',
+                  style: TextStyle(fontSize: 10, color: context.c.onSurfaceVariant))),
+          Positioned(top: 8, left: 12, right: 12, child: _searchBar()),
+          if (_results.isNotEmpty)
+            Positioned(top: 72, left: 12, right: 12, child: _resultsBox()),
+          if (_locDenied)
+            Positioned(top: 72, left: 12, right: 12, child: _locHint()),
+          Positioned(right: 12, top: _results.isNotEmpty || _locDenied ? 200 : 76,
+              child: Column(children: [
+                CompassRose(
+                  rotation: _rot.value,
+                  active: auto,
+                  onTap: () async {
+                    if (auto) {
+                      await svc.setAutoOrient(false);
+                      _snack('Свободное вращение пальцами');
+                    } else {
+                      await svc.setAutoOrient(true);
+                      _lastApplied = -999;
+                      _onCompass();
+                      _snack(svc.hasMagnetometer
+                          ? 'Карта поворачивается по компасу'
+                          : 'Компас недоступен — ориентация по курсу GPS');
+                    }
+                  },
+                ),
+                const SizedBox(height: 8),
+                _roundBtn(Icons.tune_rounded, 'Калибровка компаса',
+                    () => showCompassCalibration(context)),
+                const SizedBox(height: 8),
+                _roundBtn(Icons.north_rounded, 'Север сверху', () {
+                  svc.setAutoOrient(false);
+                  try { _map.rotate(0); _rot.value = 0; } catch (_) {}
+                }),
+                const SizedBox(height: 8),
+                _roundBtn(Icons.download_rounded, 'Скачать офлайн-карту', _downloadDialog),
+                const SizedBox(height: 8),
+                _roundBtn(_follow ? Icons.gps_fixed_rounded : Icons.my_location_rounded,
+                    'Где я', _recenter,
+                    accent: _follow ? const Color(0xFF3FA85F) : null),
+              ])),
           if (_route.isNotEmpty)
-            PolylineLayer(polylines: [
-              Polyline(points: _route, color: context.c.primary, strokeWidth: 5),
-            ]),
-          MarkerLayer(markers: [
-            if (_me != null)
-              Marker(point: _me!, width: 40, height: 40, alignment: Alignment.center,
-                  child: Icon(Icons.my_location, color: context.c.primary, size: 30)),
-            if (_dest != null)
-              Marker(point: _dest!, width: 44, height: 44, alignment: Alignment.bottomCenter,
-                  child: const Icon(Icons.place, color: Color(0xFFD64545), size: 40)),
-          ]),
-        ],
+            Positioned(left: 0, right: 0, bottom: 0, child: _routeInfo()),
+          if (_busy)
+            Positioned.fill(child: Container(color: Colors.black26,
+                child: const Center(child: CircularProgressIndicator()))),
+        ]);
+      },
+    );
+  }
+
+  Widget _meMarker(double rot) {
+    final h = CompassService.instance.heading ?? _myHeading;
+    final t = _pulse.value;
+    return Stack(alignment: Alignment.center, children: [
+      Container(
+        width: 20 + 34 * t, height: 20 + 34 * t,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF2F80ED).withOpacity(.22 * (1 - t)),
+        ),
       ),
-      Positioned(left: 8, bottom: 4,
-          child: Text('© OpenStreetMap · офлайн: $_cached',
-              style: TextStyle(fontSize: 10, color: context.c.onSurfaceVariant))),
-      Positioned(top: 8, left: 12, right: 12, child: _searchBar()),
-      if (_results.isNotEmpty)
-        Positioned(top: 70, left: 12, right: 12, child: _resultsBox()),
-      if (_locDenied)
-        Positioned(top: 70, left: 12, right: 12, child: _locHint()),
-      if (_route.isNotEmpty)
-        Positioned(left: 0, right: 0, bottom: 0, child: _routeInfo()),
-      Positioned(
-        right: 14, bottom: _route.isNotEmpty ? 130 : 24,
-        child: Column(children: [
-          FloatingActionButton.small(heroTag: 'dl', onPressed: _downloadDialog,
-              backgroundColor: context.c.surface,
-              child: Icon(Icons.download_rounded, color: context.c.primary)),
-          const SizedBox(height: 10),
-          FloatingActionButton.small(heroTag: 'me', onPressed: _recenter,
-              backgroundColor: context.c.surface,
-              child: Icon(Icons.my_location, color: context.c.primary)),
-        ]),
+      if (h != null)
+        Transform.rotate(
+          angle: (h + rot) * math.pi / 180,
+          child: Icon(Icons.navigation_rounded,
+              size: 34, color: const Color(0xFF2F80ED).withOpacity(.45)),
+        ),
+      Container(
+        width: 18, height: 18,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF2F80ED),
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(.3), blurRadius: 5)],
+        ),
       ),
-      if (_busy)
-        Positioned.fill(child: Container(color: Colors.black26,
-            child: const Center(child: CircularProgressIndicator()))),
     ]);
+  }
+
+  Widget _roundBtn(IconData icon, String tip, VoidCallback onTap, {Color? accent}) {
+    final c = context.c;
+    return Tooltip(
+      message: tip,
+      child: Material(
+        color: c.surface,
+        shape: const CircleBorder(),
+        elevation: 2,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: Container(
+            width: 46, height: 46,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: accent ?? c.outlineVariant, width: 1.4),
+            ),
+            child: Icon(icon, size: 22, color: accent ?? c.primary),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _searchBar() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(color: context.c.surface,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: context.c.outlineVariant)),
+            border: Border.all(color: context.c.outlineVariant),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(.12), blurRadius: 8)]),
         child: Row(children: [
           Icon(Icons.search, color: context.c.onSurfaceVariant),
           Expanded(child: TextField(
             controller: _searchCtrl,
             onSubmitted: (_) => _search(),
             decoration: const InputDecoration(
-                hintText: 'Куда идём? Или тапните по карте',
+                hintText: 'Куда идём? Или тапни по карте',
                 border: InputBorder.none, isDense: true,
                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 14)),
           )),
@@ -421,7 +576,7 @@ class _NaviPageState extends State<NaviPage> {
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: context.c.outlineVariant)),
         child: Row(children: [
-          Expanded(child: Text('Геолокация выключена. Включите её в настройках телефона.',
+          Expanded(child: Text('Геолокация выключена. Включи её в настройках телефона.',
               style: context.t.bodySmall)),
           TextButton(onPressed: _initLocation, child: const Text('Повторить')),
         ]),
@@ -448,21 +603,21 @@ class _NaviPageState extends State<NaviPage> {
           TextButton(onPressed: _clearRoute, child: const Text('Очистить')),
         ]),
         Row(children: [
-          _chip(Icons.straighten_rounded, dist),
+          _chip(Icons.straighten_rounded, dist, const Color(0xFF2F80ED)),
           const SizedBox(width: 16),
-          _chip(Icons.directions_walk_rounded, time),
+          _chip(Icons.directions_walk_rounded, time, const Color(0xFF3FA85F)),
         ]),
         if (_offlineMode && _bearing != null)
           Padding(padding: const EdgeInsets.only(top: 8),
-              child: Text('Офлайн-режим: по прямой, направление '
-                  '${_compass(_bearing!)} (${_bearing!.round()}°)',
+              child: Text('Офлайн: по прямой, направление '
+                  '${_compassName(_bearing!)} (${_bearing!.round()}°)',
                   style: context.t.bodySmall)),
       ]),
     );
   }
 
-  Widget _chip(IconData icon, String value) => Row(children: [
-        Icon(icon, size: 18, color: context.c.primary),
+  Widget _chip(IconData icon, String value, Color color) => Row(children: [
+        Icon(icon, size: 18, color: color),
         const SizedBox(width: 6),
         Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600,
             color: context.c.onSurface)),

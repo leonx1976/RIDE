@@ -69,7 +69,7 @@ Future<Map<String, String>> loadRouteDescriptions({bool force = false}) async {
     } catch (_) {}
   }
   final r = await http.get(Uri.parse(_descUrl),
-      headers: {'User-Agent': 'FamilyBox/1.3'}).timeout(const Duration(seconds: 25));
+      headers: {'User-Agent': 'FamilyBox/1.4'}).timeout(const Duration(seconds: 25));
   if (r.statusCode != 200) throw Exception('desc ${r.statusCode}');
   final html = utf8.decode(r.bodyBytes, allowMalformed: true);
   final out = <String, String>{};
@@ -116,7 +116,7 @@ Future<List<BusRoute>> loadBusRoutes({bool force = false}) async {
     } catch (_) {}
   }
   final r = await http.get(Uri.parse('$_busHost/'),
-      headers: {'User-Agent': 'FamilyBox/1.3'}).timeout(const Duration(seconds: 25));
+      headers: {'User-Agent': 'FamilyBox/1.4'}).timeout(const Duration(seconds: 25));
   if (r.statusCode != 200) throw Exception('site ${r.statusCode}');
   final html = utf8.decode(r.bodyBytes, allowMalformed: true);
   final re = RegExp(r'SetCurrentRoute\(this,\s*(\d+)\);">([^<]+)</a>');
@@ -143,7 +143,7 @@ Future<Map<int, Map<String, List<LatLng>>>> loadPolylines({bool force = false}) 
   if (body == null) {
     final r = await http.get(
         Uri.parse('$_busHost/default.aspx?target=main&action=get_polylines'),
-        headers: {'User-Agent': 'FamilyBox/1.3', 'Referer': '$_busHost/'})
+        headers: {'User-Agent': 'FamilyBox/1.4', 'Referer': '$_busHost/'})
         .timeout(const Duration(seconds: 40));
     if (r.statusCode != 200) throw Exception('polylines ${r.statusCode}');
     body = utf8.decode(r.bodyBytes, allowMalformed: true);
@@ -177,7 +177,7 @@ Future<String?> _reverseName(LatLng p) async {
   try {
     final uri = Uri.parse('https://nominatim.openstreetmap.org/reverse'
         '?format=json&lat=${p.latitude}&lon=${p.longitude}&zoom=17&addressdetails=1');
-    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.3'})
+    final r = await http.get(uri, headers: {'User-Agent': 'FamilyBox/1.4'})
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) return null;
     final j = jsonDecode(r.body) as Map<String, dynamic>;
@@ -200,6 +200,15 @@ int _kind(String name) {
   if (n.contains('трамвай')) return 1;
   if (n.contains('такси')) return 2;
   return 3;
+}
+
+IconData _kindIcon(int k) {
+  switch (k) {
+    case 0: return Icons.electrical_services_rounded;
+    case 1: return Icons.tram_rounded;
+    case 2: return Icons.airport_shuttle_rounded;
+    default: return Icons.directions_bus_filled_rounded;
+  }
 }
 
 String _numberOf(String name) {
@@ -408,6 +417,7 @@ class _RouteMapPageState extends State<RouteMapPage> {
   late Future<Map<int, Map<String, List<LatLng>>>> _f = loadPolylines();
   bool _showBack = true;
   bool _namesStarted = false;
+  bool _descDone = false;
   String? _desc;
   Size _size = const Size(400, 700);
   List<LatLng> _direct = [];
@@ -423,7 +433,6 @@ class _RouteMapPageState extends State<RouteMapPage> {
     tileRoot();
   }
 
-  /// Пересоздаём слой тайлов только если реально были сбои загрузки.
   void _scheduleHeal() {
     if (_healScheduled) return;
     _healScheduled = true;
@@ -455,43 +464,130 @@ class _RouteMapPageState extends State<RouteMapPage> {
     final k = _kind(widget.route.name);
     final tag = (k == 0 || k == 1) ? 't' : 'b';
     try {
-      final map = await loadRouteDescriptions();
-      final hit = map['$n|$tag'] ?? map['$n|'] ?? map[n];
-      if (hit != null && hit.isNotEmpty) {
-        if (mounted) setState(() => _desc = hit);
-        return;
-      }
-    } catch (_) {}
-    if (direct.length < 2) return;
-    try {
-      final f = await _cacheFile('route_ends.json');
-      var cache = <String, dynamic>{};
-      if (await f.exists()) {
-        try {
-          cache = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
-        } catch (_) {}
-      }
-      final key = '${widget.route.id}';
-      final hit = cache[key];
-      if (hit is Map<String, dynamic>) {
-        final a = hit['a'] as String?;
-        final b = hit['b'] as String?;
-        if (a != null && b != null && mounted) {
-          setState(() => _desc = '$a — $b');
+      try {
+        final map = await loadRouteDescriptions();
+        final hit = map['$n|$tag'] ?? map['$n|'] ?? map[n];
+        if (hit != null && hit.isNotEmpty) {
+          if (mounted) setState(() => _desc = hit);
           return;
         }
-      }
-      final a = await _reverseName(direct.first);
-      await Future.delayed(const Duration(milliseconds: 1100));
-      final b = await _reverseName(direct.last);
-      if (a != null && b != null) {
-        cache[key] = {'a': a, 'b': b};
-        try {
-          await f.writeAsString(jsonEncode(cache));
-        } catch (_) {}
-        if (mounted) setState(() => _desc = '$a — $b');
-      }
-    } catch (_) {}
+      } catch (_) {}
+      if (direct.length < 2) return;
+      try {
+        final f = await _cacheFile('route_ends.json');
+        var cache = <String, dynamic>{};
+        if (await f.exists()) {
+          try {
+            cache = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+          } catch (_) {}
+        }
+        final key = '${widget.route.id}';
+        final hit = cache[key];
+        if (hit is Map<String, dynamic>) {
+          final a = hit['a'] as String?;
+          final b = hit['b'] as String?;
+          if (a != null && b != null && mounted) {
+            setState(() => _desc = '$a — $b');
+            return;
+          }
+        }
+        final a = await _reverseName(direct.first);
+        await Future.delayed(const Duration(milliseconds: 1100));
+        final b = await _reverseName(direct.last);
+        if (a != null && b != null) {
+          cache[key] = {'a': a, 'b': b};
+          try {
+            await f.writeAsString(jsonEncode(cache));
+          } catch (_) {}
+          if (mounted) setState(() => _desc = '$a — $b');
+        }
+      } catch (_) {}
+    } finally {
+      if (mounted) setState(() => _descDone = true);
+    }
+  }
+
+  void _reloadBases() {
+    loadRouteDescriptions(force: true).catchError((_) => <String, String>{});
+    setState(() {
+      _namesStarted = false;
+      _descDone = false;
+      _desc = null;
+      _cam = null;
+      _f = loadPolylines(force: true);
+    });
+  }
+
+  Widget _noScheme(BuildContext context) {
+    final k = _kind(widget.route.name);
+    final color = _kindColor(k);
+    _resolveDesc(const <LatLng>[]);
+    final title = _desc ??
+        (_descDone ? 'Название в справочнике не найдено' : 'Загружаем название…');
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 66, height: 66,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withOpacity(.14),
+              border: Border.all(color: color.withOpacity(.55), width: 1.6),
+            ),
+            child: Icon(_kindIcon(k), size: 30, color: color),
+          ),
+          const SizedBox(height: 14),
+          Text(widget.route.name,
+              style: context.t.titleMedium, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: context.c.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: color.withOpacity(.45), width: 1.3),
+            ),
+            child: Row(children: [
+              if (_desc == null && !_descDone)
+                const Padding(
+                  padding: EdgeInsets.only(right: 10),
+                  child: SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                ),
+              Expanded(
+                child: Text(title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                        color: context.c.onSurface)),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Text('Схема этого маршрута отсутствует в базе.',
+              textAlign: TextAlign.center, style: context.t.bodySmall),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: const Text('К списку маршрутов'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: _reloadBases,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Обновить базы'),
+          ),
+        ]),
+      ),
+    );
   }
 
   @override
@@ -520,28 +616,7 @@ class _RouteMapPageState extends State<RouteMapPage> {
             );
           }
           final dirs = s.data![widget.route.id];
-          if (dirs == null || dirs.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.route_rounded, size: 40, color: context.c.onSurfaceVariant),
-                  const SizedBox(height: 12),
-                  Text(widget.route.name,
-                      style: context.t.titleMedium, textAlign: TextAlign.center),
-                  const SizedBox(height: 8),
-                  Text('Источник не отдаёт трек этого маршрута, '
-                      'поэтому схему нарисовать нечем. '
-                      'Остальные маршруты работают.',
-                      textAlign: TextAlign.center, style: context.t.bodySmall),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('К списку маршрутов')),
-                ]),
-              ),
-            );
-          }
+          if (dirs == null || dirs.isEmpty) return _noScheme(context);
           _direct = dirs['direct'] ?? <LatLng>[];
           _back = dirs['back'] ?? <LatLng>[];
           final all = [..._direct, if (_showBack) ..._back];

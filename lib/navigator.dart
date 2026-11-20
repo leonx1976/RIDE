@@ -83,14 +83,18 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
     if (!svc.autoOrient) return;
     final h = svc.heading;
     if (h == null) return;
-    var delta = (h - _lastApplied).abs();
-    if (delta > 180) delta = 360 - delta;
-    if (delta < 1.2) return;
+    var d = (h - _lastApplied) % 360;
+    if (d < 0) d += 360;
+    if (d > 180) d = 360 - d;
+    if (_lastApplied > -360 && d < 1.0) return;
     _lastApplied = h;
-    try {
-      _map.rotate(-h);
-      _rot.value = -h;
-    } catch (_) {}
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        _map.rotate(-h);
+        _rot.value = _map.camera.rotation;
+      } catch (_) {}
+    });
   }
 
   void _snack(String msg, {bool error = false}) {

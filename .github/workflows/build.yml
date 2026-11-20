@@ -26,7 +26,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Репозитории Maven для Gradle
+      - name: Настройки Gradle для плагинов
         run: |
           mkdir -p ~/.gradle/init.d
           cat > ~/.gradle/init.d/repos.gradle <<'EOF'
@@ -47,6 +47,18 @@ jobs:
                       gradlePluginPortal()
                   }
               } catch (Throwable ignored) { }
+              p.afterEvaluate {
+                  try {
+                      def ext = p.extensions.findByName('android')
+                      if (ext != null && p.name != 'app') {
+                          try {
+                              ext.compileSdk = 36
+                          } catch (Throwable t1) {
+                              try { ext.compileSdkVersion(36) } catch (Throwable t2) { }
+                          }
+                      }
+                  } catch (Throwable ignored) { }
+              }
           }
           EOF
           cat ~/.gradle/init.d/repos.gradle

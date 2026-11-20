@@ -385,7 +385,9 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
               minZoom: 3,
               maxZoom: 18,
               onTap: _onMapTap,
-              onPositionChanged: (cam, _) => _rot.value = cam.rotation,
+              onPositionChanged: (_, __) {
+                try { _rot.value = _map.camera.rotation; } catch (_) {}
+              },
               interactionOptions: InteractionOptions(
                 flags: auto
                     ? (InteractiveFlag.all & ~InteractiveFlag.rotate)

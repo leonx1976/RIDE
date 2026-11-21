@@ -500,7 +500,17 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
     if (h != null) {
       children.add(Transform.rotate(
         angle: (h + rot) * math.pi / 180,
-        child: CustomPaint(size: const Size(62, 62), painter: _HeadingCone()),
+        child: SizedBox(
+          width: 62,
+          height: 62,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Stack(alignment: Alignment.center, children: const [
+              Icon(Icons.arrow_drop_up_rounded, size: 40, color: Colors.white),
+              Icon(Icons.arrow_drop_up_rounded, size: 34, color: Color(0xFF2F80ED)),
+            ]),
+          ),
+        ),
       ));
     }
     children.add(Container(

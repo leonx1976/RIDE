@@ -161,7 +161,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
         final shown = _shown;
         final auto = svc.autoOrient;
         return Stack(children: [
-          Positioned(left: -3000, top: -3000, width: 420, height: 760, child: _feed.host),
+          Positioned(left: -4000, top: -4000, width: 1280, height: 1900, child: _feed.host),
           FlutterMap(
             mapController: _map,
             options: MapOptions(
@@ -268,20 +268,20 @@ class _TrafficMapPageState extends State<TrafficMapPage>
       ));
     }
     layers.add(Container(
-      padding: EdgeInsets.symmetric(horizontal: _labels ? 6 : 0, vertical: 2),
-      constraints: BoxConstraints(minWidth: _labels ? 24 : 15),
+      padding: EdgeInsets.symmetric(horizontal: _labels ? 8 : 0, vertical: 3),
+      constraints: BoxConstraints(minWidth: _labels ? 30 : 16),
       decoration: BoxDecoration(
         color: col,
-        borderRadius: BorderRadius.circular(_labels ? 8 : 20),
-        border: Border.all(color: Colors.white, width: sel ? 2.6 : 1.5),
-        boxShadow: [BoxShadow(color: col.withOpacity(sel ? .85 : .45),
-            blurRadius: sel ? 14 : 6)],
+        borderRadius: BorderRadius.circular(_labels ? 9 : 20),
+        border: Border.all(color: Colors.white, width: sel ? 3 : 2),
+        boxShadow: [BoxShadow(color: col.withOpacity(sel ? .9 : .5),
+            blurRadius: sel ? 16 : 8)],
       ),
       child: _labels
           ? Text(v.route, textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 11,
-                  fontWeight: FontWeight.w800, height: 1.1))
-          : const SizedBox(width: 7, height: 7),
+              style: const TextStyle(color: Colors.white, fontSize: 13,
+                  fontWeight: FontWeight.w900, height: 1.1))
+          : const SizedBox(width: 8, height: 8),
     ));
     return GestureDetector(
       onTap: () => setState(() => _sel = v),

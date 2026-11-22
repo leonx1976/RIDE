@@ -11,7 +11,7 @@ import 'kaluga.dart';
 import 'navigator.dart';
 import 'routes_map.dart';
 import 'schedule_pages.dart';
-import 'traffic_live.dart';
+import 'traffic_map.dart';
 import 'weather.dart';
 import 'web_page.dart';
 
@@ -186,7 +186,7 @@ class Shell extends StatelessWidget {
                       case '/navi':     page = const NaviPage(); break;
                       case '/routes':   page = const RoutesListPage(); break;
                       case '/routemap': page = RouteMapPage(route: s.arguments as BusRoute); break;
-                      case '/traffic':  page = const TrafficLivePage(); break;
+                      case '/traffic':  page = const TrafficMapPage(); break;
                       case '/web':      page = WebPage(args: s.arguments as WebArgs); break;
                       default:          page = const HomePage();
                     }

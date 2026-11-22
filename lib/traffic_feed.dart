@@ -6,6 +6,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 const feedUrl =
     'https://yandex.ru/maps/6/kaluga/transport/?l=map&ll=36.261341%2C54.513678&z=13';
+
 const _hookJs = r'''
 (function(){
   if (window.__feed) return; window.__feed = 1;
@@ -41,7 +42,7 @@ const _hookJs = r'''
   setInterval(function(){
     try { window.dispatchEvent(new Event('resize')); } catch(e){}
     try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
-  }, 8000);
+  }, 5000);
 })();
 ''';
 
@@ -83,9 +84,10 @@ class YVehicle {
 
   double? get heading {
     if (trail.length < 2) return null;
-    final a = headAtEnd ? trail[trail.length - 2] : trail[1];
-    final b = const Distance().bearing(a, pos);
-    return (b + 360) % 360;
+    final a = headAtEnd ? trail[trail.length - 2] : trail[0];
+    final b = headAtEnd ? trail.last : trail[1];
+    final deg = const Distance().bearing(a, b);
+    return (deg + 360) % 360;
   }
 }
 
@@ -111,7 +113,7 @@ List<YVehicle> parseYandexVehicles(String body, bool headAtEnd) {
           }
         }
         if (pts.isEmpty) continue;
-        final id = (tr?['id'] ?? '${pts.last.latitude},${pts.last.longitude}').toString();
+        final id = (tr?['id'] ?? '${pts.first.latitude},${pts.first.longitude}').toString();
         final route = (tr?['name'] ?? '?').toString();
         var type = (tr?['type'] ?? '').toString();
         if (type.isEmpty) {
@@ -129,13 +131,14 @@ class TrafficFeed extends ChangeNotifier {
   late final WebViewController c;
   Widget? _host;
   Timer? _watch;
-  bool headAtEnd = true;
+  bool headAtEnd = false;
   bool economy = false;
   bool running = true;
   int polls = 0;
   DateTime? updated;
   String? error;
   List<YVehicle> vehicles = [];
+  final Map<String, DateTime> seen = {};
 
   TrafficFeed() {
     c = WebViewController()
@@ -176,17 +179,34 @@ class TrafficFeed extends ChangeNotifier {
     return _host!;
   }
 
+  int ageOf(String id) {
+    final t = seen[id];
+    return t == null ? -1 : DateTime.now().difference(t).inSeconds;
+  }
+
   void _accept(String body) {
     final list = parseYandexVehicles(body, headAtEnd);
     polls++;
-    if (list.isEmpty) {
-      if (vehicles.isEmpty) error = 'Источник ответил, но машин на линии нет';
-      notifyListeners();
-      return;
+    final now = DateTime.now();
+    if (list.isNotEmpty) {
+      for (final v in list) {
+        seen[v.id] = now;
+        final i = vehicles.indexWhere((e) => e.id == v.id);
+        if (i >= 0) {
+          vehicles[i] = v;
+        } else {
+          vehicles.add(v);
+        }
+      }
+      vehicles.removeWhere((e) {
+        final t = seen[e.id];
+        return t == null || now.difference(t).inSeconds > 90;
+      });
+      updated = now;
+      error = null;
+    } else if (vehicles.isEmpty) {
+      error = 'Источник ответил, но машин на линии нет';
     }
-    vehicles = list;
-    updated = DateTime.now();
-    error = null;
     notifyListeners();
   }
 

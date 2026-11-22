@@ -5,11 +5,17 @@ import 'package:latlong2/latlong.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 const feedUrl =
-    'https://yandex.ru/maps/6/kaluga/transport/?l=sat%2Cskl&ll=36.251580%2C54.517620&z=16';
-
+    'https://yandex.ru/maps/6/kaluga/transport/?l=map&ll=36.261341%2C54.513678&z=13';
 const _hookJs = r'''
 (function(){
   if (window.__feed) return; window.__feed = 1;
+  try {
+    Object.defineProperty(document, 'hidden', {get:function(){return false;}, configurable:true});
+    Object.defineProperty(document, 'visibilityState', {get:function(){return 'visible';}, configurable:true});
+    document.hasFocus = function(){ return true; };
+    window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(Date.now()); }, 16); };
+    window.cancelAnimationFrame = function(id){ clearTimeout(id); };
+  } catch(e){}
   function post(t){ try { Feed.postMessage(t); } catch(e){} }
   var RX = /getVehiclesInfoWithRegion/;
   var of = window.fetch;
@@ -32,6 +38,10 @@ const _hookJs = r'''
     }
     return os.apply(this, arguments);
   };
+  setInterval(function(){
+    try { window.dispatchEvent(new Event('resize')); } catch(e){}
+    try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
+  }, 8000);
 })();
 ''';
 
@@ -153,7 +163,7 @@ class TrafficFeed extends ChangeNotifier {
       final age = updated == null
           ? 999
           : DateTime.now().difference(updated!).inSeconds;
-      if (age > 45) {
+      if (age > 90) {
         error = 'Нет свежих данных — перезагружаю источник';
         notifyListeners();
         c.loadRequest(Uri.parse(feedUrl));

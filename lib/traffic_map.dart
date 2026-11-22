@@ -48,11 +48,34 @@ class _TrafficMapPageState extends State<TrafficMapPage>
   bool _labels = true;
   bool _locBusy = false;
   double _lastApplied = -999;
+  final Map<String, LatLng> _shownPos = {};
+  Map<String, LatLng> _prev = {};
+  DateTime _feedAt = DateTime.now();
+
+  void _onFeed() {
+    _prev = Map<String, LatLng>.from(_shownPos);
+    _feedAt = DateTime.now();
+  }
+
+  LatLng _at(YVehicle v) {
+    final a = _prev[v.id];
+    if (a == null) {
+      _shownPos[v.id] = v.pos;
+      return v.pos;
+    }
+    final ms = DateTime.now().difference(_feedAt).inMilliseconds;
+    final t = Curves.easeOutCubic.transform((ms / 2500).clamp(0.0, 1.0));
+    final p = LatLng(a.latitude + (v.pos.latitude - a.latitude) * t,
+        a.longitude + (v.pos.longitude - a.longitude) * t);
+    _shownPos[v.id] = p;
+    return p;
+  } 
 
   @override
   void initState() {
     super.initState();
     tileRoot();
+    _feed.addListener(_onFeed);
     CompassService.instance.acquire();
     CompassService.instance.addListener(_onCompass);
   }
@@ -64,6 +87,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
     _pingTimer?.cancel();
     _pulse.dispose();
     _rot.dispose();
+    _feed.removeListener(_onFeed);
     _feed.dispose();
     super.dispose();
   }
@@ -142,7 +166,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
   }
 
   void _fitAll() {
-    final pts = _shown.map((v) => v.pos).toList();
+    final pts = _shown.map(_at).toList();
     if (_ping != null) pts.add(_ping!);
     if (pts.length < 2) { try { _map.move(_kaluga, 13); } catch (_) {} return; }
     try {
@@ -197,7 +221,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
                 valueListenable: _rot,
                 builder: (context, rot, __) => MarkerLayer(markers: [
                   for (final v in shown)
-                    Marker(point: v.pos, width: 56, height: 56,
+                    Marker(point: _at(v), width: 56, height: 56,
                         alignment: Alignment.center, child: _marker(v, rot)),
                   if (_ping != null)
                     Marker(point: _ping!, width: 92, height: 92,
@@ -408,7 +432,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
           IconButton(onPressed: () => setState(() => _sel = null),
               icon: const Icon(Icons.close_rounded, size: 18)),
         ]),
-        Text('точек трека: ${v.trail.length} · курс '
+        Text('обновлено ${_feed.ageOf(v.id)} с · точек ${v.trail.length} · курс '
             '${v.heading == null ? "—" : "${v.heading!.round()}°"}',
             style: context.t.bodySmall),
         const SizedBox(height: 6),

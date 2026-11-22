@@ -200,7 +200,7 @@ class TrafficFeed extends ChangeNotifier {
     if (v) {
       await c.loadRequest(Uri.parse(feedUrl));
     } else {
-      try { await c.loadUrl('about:blank'); } catch (_) {}
+      try { await c.loadHtmlString('<html><body></body></html>'); } catch (_) {}
     }
     notifyListeners();
   }

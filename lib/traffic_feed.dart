@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'routes_map.dart';
+
 const feedUrl =
     'https://yandex.ru/maps/6/kaluga/transport/?l=map&ll=36.261341%2C54.513678&z=13';
 
@@ -46,22 +48,6 @@ const _hookJs = r'''
 })();
 ''';
 
-const _ecoJs = r'''
-(function(){
-  if (window.__eco) return; window.__eco = 1;
-  var B = /core-renderer-tiles|sat0\d\.maps\.yandex|avatars\.mds|\/an\/|rtbcount|metrika|\/style\?protocol/;
-  var of = window.fetch;
-  window.fetch = function(i, init){
-    var u = (typeof i === 'string') ? i : (i && i.url) || '';
-    if (B.test(u)) {
-      return Promise.resolve(new Response('{"data":{}}',
-        {status:200, headers:{'content-type':'application/json'}}));
-    }
-    return of.apply(this, arguments);
-  };
-})();
-''';
-
 Map? _m(dynamic v) => v is Map ? v : null;
 List? _l(dynamic v) => v is List ? v : null;
 
@@ -74,24 +60,14 @@ int kindOfType(String t) {
 }
 
 class YVehicle {
-  YVehicle(this.id, this.route, this.kind, this.trail, this.headAtEnd);
+  YVehicle(this.id, this.route, this.kind, this.trail);
   final String id, route;
   final int kind;
   final List<LatLng> trail;
-  final bool headAtEnd;
-
-  LatLng get pos => headAtEnd ? trail.last : trail.first;
-
-  double? get heading {
-    if (trail.length < 2) return null;
-    final a = headAtEnd ? trail[trail.length - 2] : trail[0];
-    final b = headAtEnd ? trail.last : trail[1];
-    final deg = const Distance().bearing(a, b);
-    return (deg + 360) % 360;
-  }
+  LatLng get head => trail.first;
 }
 
-List<YVehicle> parseYandexVehicles(String body, bool headAtEnd) {
+List<YVehicle> parseYandexVehicles(String body) {
   final out = <YVehicle>[];
   try {
     final data = _m(_m(jsonDecode(body))?['data']);
@@ -120,7 +96,7 @@ List<YVehicle> parseYandexVehicles(String body, bool headAtEnd) {
           final ts = _l(tr?['Types']);
           type = (ts != null && ts.isNotEmpty) ? ts.first.toString() : 'bus';
         }
-        out.add(YVehicle(id, route, kindOfType(type), pts, headAtEnd));
+        out.add(YVehicle(id, route, kindOfType(type), pts));
       }
     }
   } catch (_) {}
@@ -131,16 +107,19 @@ class TrafficFeed extends ChangeNotifier {
   late final WebViewController c;
   Widget? _host;
   Timer? _watch;
-  bool headAtEnd = false;
-  bool economy = false;
-  bool running = true;
   int polls = 0;
   DateTime? updated;
   String? error;
   List<YVehicle> vehicles = [];
   final Map<String, DateTime> seen = {};
+  Map<String, String> titles = {};
 
   TrafficFeed() {
+    loadRouteDescriptions().then((m) {
+      titles = m;
+      notifyListeners();
+    }).catchError((_) => <String, String>{});
+
     c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('Feed', onMessageReceived: (JavaScriptMessage m) {
@@ -148,11 +127,9 @@ class TrafficFeed extends ChangeNotifier {
       })
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) async {
-          if (economy) { try { await c.runJavaScript(_ecoJs); } catch (_) {} }
           try { await c.runJavaScript(_hookJs); } catch (_) {}
         },
         onPageFinished: (_) async {
-          if (economy) { try { await c.runJavaScript(_ecoJs); } catch (_) {} }
           try { await c.runJavaScript(_hookJs); } catch (_) {}
         },
         onNavigationRequest: (r) => r.url.startsWith('http')
@@ -162,10 +139,7 @@ class TrafficFeed extends ChangeNotifier {
       ..loadRequest(Uri.parse(feedUrl));
 
     _watch = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (!running) return;
-      final age = updated == null
-          ? 999
-          : DateTime.now().difference(updated!).inSeconds;
+      final age = updated == null ? 999 : DateTime.now().difference(updated!).inSeconds;
       if (age > 90) {
         error = 'Нет свежих данных — перезагружаю источник';
         notifyListeners();
@@ -184,8 +158,16 @@ class TrafficFeed extends ChangeNotifier {
     return t == null ? -1 : DateTime.now().difference(t).inSeconds;
   }
 
+  String titleOf(YVehicle v) {
+    final n = v.route.split('/').first;
+    final tag = (v.kind == 0 || v.kind == 1) ? 't' : 'b';
+    final t = titles['$n|$tag'] ?? titles['$n|'] ?? titles[n];
+    if (t != null && t.isNotEmpty) return t;
+    return 'Маршрут № ${v.route}';
+  }
+
   void _accept(String body) {
-    final list = parseYandexVehicles(body, headAtEnd);
+    final list = parseYandexVehicles(body);
     polls++;
     final now = DateTime.now();
     if (list.isNotEmpty) {
@@ -206,31 +188,6 @@ class TrafficFeed extends ChangeNotifier {
       error = null;
     } else if (vehicles.isEmpty) {
       error = 'Источник ответил, но машин на линии нет';
-    }
-    notifyListeners();
-  }
-
-  void setHeadAtEnd(bool v) {
-    headAtEnd = v;
-    vehicles = vehicles
-        .map((e) => YVehicle(e.id, e.route, e.kind, e.trail, v))
-        .toList();
-    notifyListeners();
-  }
-
-  Future<void> setEconomy(bool v) async {
-    economy = v;
-    if (v) { try { await c.runJavaScript(_ecoJs); } catch (_) {} }
-    await c.loadRequest(Uri.parse(feedUrl));
-    notifyListeners();
-  }
-
-  Future<void> setRunning(bool v) async {
-    running = v;
-    if (v) {
-      await c.loadRequest(Uri.parse(feedUrl));
-    } else {
-      try { await c.loadHtmlString('<html><body></body></html>'); } catch (_) {}
     }
     notifyListeners();
   }

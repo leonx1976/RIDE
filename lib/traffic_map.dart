@@ -368,15 +368,15 @@ class _TrafficMapPageState extends State<TrafficMapPage>
         : _countOf(_routeFilter!);
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-      height: 56,
+      height: 46,
       decoration: BoxDecoration(
         color: context.c.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: context.c.outlineVariant),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(.22), blurRadius: 12)],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(13),
         child: Stack(children: [
           Positioned.fill(
             child: ScrollbarTheme(
@@ -392,25 +392,35 @@ class _TrafficMapPageState extends State<TrafficMapPage>
                 child: ListView(
                   controller: _chips,
                   scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.only(left: 104, right: 12, bottom: 4),
+                  padding: const EdgeInsets.only(left: 76, right: 10, bottom: 3),
                   children: [for (final r in routes) _chip(r)],
                 ),
               ),
             ),
           ),
-          Positioned(left: 0, top: 0, bottom: 0, width: 92,
-              child: Container(color: context.c.surface, child: _allChip(count))),
-          Positioned(left: 90, top: 0, bottom: 0, width: 16,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [
-                      context.c.surface,
-                      context.c.surface.withOpacity(0),
-                    ]),
-                  ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 62,
+            child: Container(color: context.c.surface, child: _allChip(count)),
+          ),
+          Positioned(
+            left: 60,
+            top: 0,
+            bottom: 0,
+            width: 16,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [
+                    context.c.surface,
+                    context.c.surface.withOpacity(0),
+                  ]),
                 ),
-              )),
+              ),
+            ),
+          ),
         ]),
       ),
     );
@@ -419,11 +429,15 @@ class _TrafficMapPageState extends State<TrafficMapPage>
   Widget _allChip(int count) {
     final all = _routeFilter == null;
     return InkWell(
-      onTap: () => setState(() { _routeFilter = null; _selId = null; }),
+      onTap: () => setState(() {
+        _routeFilter = null;
+        _selId = null;
+      }),
       child: Container(
         margin: const EdgeInsets.all(6),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(11),
+          borderRadius: BorderRadius.circular(10),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -431,54 +445,67 @@ class _TrafficMapPageState extends State<TrafficMapPage>
                 ? [const Color(0xFF1B4FA8), const Color(0xFF1E7A46)]
                 : [const Color(0xFFB4661A), const Color(0xFFE08A2E)],
           ),
-          boxShadow: [BoxShadow(
-              color: (all ? _cTrolley : _cTaxi).withOpacity(.4), blurRadius: 8)],
+          border: Border.all(color: Colors.white.withOpacity(.22)),
+          boxShadow: [
+            BoxShadow(
+                color: (all ? _cTrolley : _cTaxi).withOpacity(.42),
+                blurRadius: 8),
+          ],
         ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(all ? 'Все' : '№ ${_routeFilter!}',
-              style: const TextStyle(color: Colors.white, fontSize: 10.5,
-                  fontWeight: FontWeight.w700, height: 1.1)),
-          Text('$count',
-              style: const TextStyle(color: Colors.white, fontSize: 17,
-                  fontWeight: FontWeight.w900, height: 1.15)),
-        ]),
+        child: Text('$count',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                height: 1.05)),
       ),
     );
   }
 
   Widget _chip(String r) {
     final on = _routeFilter == r;
-    final col = _kc(_feed.vehicles.firstWhere((v) => v.route == r).kind);
+    final matches = _feed.vehicles.where((v) => v.route == r);
+    final col = _kc(matches.isEmpty ? 3 : matches.first.kind);
     return Padding(
-      padding: const EdgeInsets.only(right: 6, top: 6, bottom: 6),
+      padding: const EdgeInsets.only(right: 5, top: 6, bottom: 3),
       child: Material(
         color: on ? col : col.withOpacity(.12),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(9),
         child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: () => setState(() { _routeFilter = r; _selId = null; }),
+          borderRadius: BorderRadius.circular(9),
+          onTap: () => setState(() {
+            _routeFilter = r;
+            _selId = null;
+          }),
           child: Container(
-            width: 52,
+            width: 44,
             alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(9),
               border: Border.all(color: on ? col : col.withOpacity(.5)),
+              boxShadow: on
+                  ? [BoxShadow(color: col.withOpacity(.45), blurRadius: 8)]
+                  : null,
             ),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(r, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900,
-                  height: 1.1, color: on ? Colors.white : context.c.onSurface)),
-              Text('${_countOf(r)}', style: TextStyle(fontSize: 9.5,
-                  height: 1.2,
-                  color: on ? Colors.white.withOpacity(.85) : context.c.onSurfaceVariant)),
-            ]),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(r,
+                  maxLines: 1,
+                  style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      height: 1.05,
+                      color: on ? Colors.white : context.c.onSurface)),
+            ),
           ),
         ),
       ),
     );
   }
-
   Widget _detail(YVehicle v) {
     final col = _kc(v.kind);
+    final info = _feed.resolve(v);
     return AnimatedBuilder(
       animation: _frame,
       builder: (context, _) => Container(
@@ -491,23 +518,52 @@ class _TrafficMapPageState extends State<TrafficMapPage>
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(.28), blurRadius: 18)],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(width: 36, height: 36,
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 38, height: 38,
               decoration: BoxDecoration(color: col,
-                  borderRadius: BorderRadius.circular(11)),
-              child: Icon(_ki(v.kind), color: Colors.white, size: 20)),
+                  borderRadius: BorderRadius.circular(12)),
+              child: Icon(_ki(v.kind), color: Colors.white, size: 21),
+            ),
             const SizedBox(width: 10),
-            Expanded(child: Text(_feed.titleOf(v),
-                style: context.t.titleMedium, maxLines: 2,
-                overflow: TextOverflow.ellipsis)),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(info.title,
+                    style: context.t.titleMedium,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis),
+              ),
+            ),
             IconButton(onPressed: () => setState(() => _selId = null),
                 icon: const Icon(Icons.close_rounded, size: 20)),
           ]),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: Text(
-                '${_kn(v.kind)} · обновлено ${_feed.ageOf(v.id)} с',
-                style: context.t.bodySmall)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: col.withOpacity(.16),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: col.withOpacity(.5)),
+              ),
+              child: Text('№ ${v.route}',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900,
+                      color: context.c.onSurface)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('${_kn(v.kind)} · обновлено ${_feed.ageOf(v.id)} с',
+                  style: context.t.bodySmall,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: Text(info.note,
+                style: context.t.bodySmall,
+                maxLines: 2, overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 8),
             FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: col),
               onPressed: () {
@@ -561,3 +617,4 @@ class _TrafficMapPageState extends State<TrafficMapPage>
                   : Icon(i, size: 21, color: accent ?? context.c.primary)))),
       );
 }
+

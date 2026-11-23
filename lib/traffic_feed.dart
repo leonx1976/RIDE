@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import 'routes_map.dart';
+import 'route_names.dart';
 
 const feedUrl =
     'https://yandex.ru/maps/6/kaluga/transport/?l=map&ll=36.261341%2C54.513678&z=13';
@@ -96,7 +96,10 @@ List<YVehicle> parseYandexVehicles(String body) {
           final ts = _l(tr?['Types']);
           type = (ts != null && ts.isNotEmpty) ? ts.first.toString() : 'bus';
         }
-        out.add(YVehicle(id, route, kindOfType(type), pts));
+        final kind = kindOfType(type);
+        RouteNames.instance.offerHarvest(route, harvestTitle(v, route));
+        RouteNames.instance.ensureDirection(route, kind, pts.last);
+        out.add(YVehicle(id, route, kind, pts));
       }
     }
   } catch (_) {}
@@ -112,13 +115,12 @@ class TrafficFeed extends ChangeNotifier {
   String? error;
   List<YVehicle> vehicles = [];
   final Map<String, DateTime> seen = {};
-  Map<String, String> titles = {};
 
   TrafficFeed() {
-    loadRouteDescriptions().then((m) {
-      titles = m;
-      notifyListeners();
-    }).catchError((_) => <String, String>{});
+    RouteNames.instance.onChanged = () {
+      if (!_closed) notifyListeners();
+    };
+    RouteNames.instance.load();
 
     c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -139,6 +141,7 @@ class TrafficFeed extends ChangeNotifier {
       ..loadRequest(Uri.parse(feedUrl));
 
     _watch = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (_closed) return;
       final age = updated == null ? 999 : DateTime.now().difference(updated!).inSeconds;
       if (age > 90) {
         error = 'Нет свежих данных — перезагружаю источник';
@@ -147,6 +150,8 @@ class TrafficFeed extends ChangeNotifier {
       }
     });
   }
+
+  bool _closed = false;
 
   Widget get host {
     _host ??= WebViewWidget(controller: c);
@@ -158,13 +163,10 @@ class TrafficFeed extends ChangeNotifier {
     return t == null ? -1 : DateTime.now().difference(t).inSeconds;
   }
 
-  String titleOf(YVehicle v) {
-    final n = v.route.split('/').first;
-    final tag = (v.kind == 0 || v.kind == 1) ? 't' : 'b';
-    final t = titles['$n|$tag'] ?? titles['$n|'] ?? titles[n];
-    if (t != null && t.isNotEmpty) return t;
-    return 'Маршрут № ${v.route}';
-  }
+  ({String title, String note}) resolve(YVehicle v) =>
+      RouteNames.instance.resolve(v.route, v.kind);
+
+  String titleOf(YVehicle v) => resolve(v).title;
 
   void _accept(String body) {
     final list = parseYandexVehicles(body);
@@ -189,17 +191,20 @@ class TrafficFeed extends ChangeNotifier {
     } else if (vehicles.isEmpty) {
       error = 'Источник ответил, но машин на линии нет';
     }
-    notifyListeners();
+    if (!_closed) notifyListeners();
   }
 
   Future<void> refreshNow() async {
+    await RouteNames.instance.refreshAll();
     await c.loadRequest(Uri.parse(feedUrl));
-    notifyListeners();
+    if (!_closed) notifyListeners();
   }
 
   @override
   void dispose() {
+    _closed = true;
     _watch?.cancel();
+    RouteNames.instance.onChanged = null;
     super.dispose();
   }
 }

@@ -52,8 +52,7 @@ class TrackAnim {
     final b = List<double>.filled(n - 1, 0);
     var acc = 0.0;
     for (var i = 1; i < n; i++) {
-      final d = approxMeters(path[i - 1], path[i]);
-      acc += d;
+      acc += approxMeters(path[i - 1], path[i]);
       c[i] = acc;
       final dy = path[i].latitude - path[i - 1].latitude;
       final dx = (path[i].longitude - path[i - 1].longitude) *
@@ -84,11 +83,11 @@ class TrackAnim {
     _sample();
   }
 
-  void advance(double dt, {double horizon = 3.4, double vMax = 17.0}) {
+  void advance(double dt, {double horizon = 6.8, double vMax = 8.5}) {
     final remaining = total - s;
     var target = remaining <= 0.7 ? 0.0 : remaining / horizon;
     if (target > vMax) target = vMax;
-    final alpha = 1 - math.exp(-dt / 0.55);
+    final alpha = 1 - math.exp(-dt / 0.7);
     v += (target - v) * alpha;
     if (v < 0.02) v = 0;
     s += v * dt;

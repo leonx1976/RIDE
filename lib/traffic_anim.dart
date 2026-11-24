@@ -26,6 +26,7 @@ class TrackAnim {
   TrackAnim(List<LatLng> p) {
     _set(p);
     s = 0;
+    limit = 0;
     v = 0;
     _sample();
   }
@@ -33,8 +34,11 @@ class TrackAnim {
   List<LatLng> path = const [];
   List<double> cum = const [];
   List<double> bear = const [];
+  List<LatLng>? _pending;
+
   double total = 0;
   double s = 0;
+  double limit = 0;
   double v = 0;
   LatLng pos = const LatLng(0, 0);
   double? heading;
@@ -64,43 +68,82 @@ class TrackAnim {
     total = acc;
   }
 
-  void rebase(List<LatLng> p, LatLng current) {
-    _set(p);
+  double _project(LatLng p) {
+    if (path.length < 2) return 0;
     var best = double.infinity;
     var bestS = 0.0;
     for (var i = 0; i < path.length - 1; i++) {
       final a = path[i], b = path[i + 1];
-      final t = _segT(a, b, current);
+      final t = _segT(a, b, p);
       final q = LatLng(a.latitude + (b.latitude - a.latitude) * t,
           a.longitude + (b.longitude - a.longitude) * t);
-      final d = approxMeters(current, q);
+      final d = approxMeters(p, q);
       if (d < best) {
         best = d;
         bestS = cum[i] + (cum[i + 1] - cum[i]) * t;
       }
     }
-    s = bestS > total ? total : bestS;
-    _sample();
+    return bestS;
   }
 
-  void advance(double dt, {double horizon = 6.8, double vMax = 8.5}) {
-    final remaining = total - s;
-    var target = remaining <= 0.7 ? 0.0 : remaining / horizon;
+  /// Цель — голова свежего ответа Яндекса, спроецированная на текущую геометрию.
+  /// Дальше этой точки маркер не уходит никогда.
+  void rebase(List<LatLng> fresh, LatLng current) {
+    if (fresh.isEmpty) return;
+    if (path.length < 2 || total <= 0) {
+      _set(fresh);
+      s = 0;
+      limit = 0;
+      v = 0;
+      _pending = null;
+      _sample();
+      return;
+    }
+    final head = fresh.first;
+    final sT = _project(head);
+    final exhausted = sT > total - 2 && approxMeters(path.last, head) > 10;
+    if (exhausted) {
+      _set(fresh);
+      s = _project(current);
+      limit = s;
+      _pending = null;
+      _sample();
+      return;
+    }
+    limit = sT > s ? sT : s;
+    _pending = fresh;
+  }
+
+  void advance(double dt, {double horizon = 3.0, double vMax = 14.0}) {
+    if (path.length < 2) return;
+    final remaining = limit - s;
+    var target = remaining <= 0.5 ? 0.0 : remaining / horizon;
     if (target > vMax) target = vMax;
-    final alpha = 1 - math.exp(-dt / 0.7);
+    final alpha = 1 - math.exp(-dt / 0.6);
     v += (target - v) * alpha;
     if (v < 0.02) v = 0;
     s += v * dt;
-    if (s >= total) {
-      s = total;
+    if (s >= limit) {
+      s = limit;
       v = 0;
     }
+    if (s < 0) s = 0;
     _sample();
+
+    final next = _pending;
+    if (next != null && limit - s < 0.5) {
+      _pending = null;
+      _set(next);
+      s = _project(pos);
+      limit = s;
+      v = 0;
+      _sample();
+    }
   }
 
   void _sample() {
     if (path.length < 2) {
-      pos = path.first;
+      pos = path.isEmpty ? const LatLng(0, 0) : path.first;
       heading = null;
       return;
     }

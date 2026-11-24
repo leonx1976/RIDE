@@ -9,6 +9,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'compass.dart';
 import 'main.dart';
+import 'nav_journal_ui.dart';
 import 'tiles.dart';
 
 const LatLng _kaluga = LatLng(54.5293, 36.2754);
@@ -107,6 +108,7 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
   }
 
   Future<void> _initLocation() async {
+    NavJournal.instance.load();
     try {
       var p = await Geolocator.checkPermission();
       if (p == LocationPermission.denied) p = await Geolocator.requestPermission();
@@ -118,10 +120,12 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
       if (mounted) setState(() => _locDenied = false);
       final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       if (!mounted) return;
+      final me0 = LatLng(pos.latitude, pos.longitude);
       setState(() {
-        _me = LatLng(pos.latitude, pos.longitude);
+        _me = me0;
         _myHeading = pos.heading;
       });
+      NavJournal.instance.feed(me0);
       CompassService.instance.setGpsCourse(pos.heading, pos.speed);
       _map.move(_me!, 16);
       await _posSub?.cancel();
@@ -130,10 +134,12 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
             accuracy: LocationAccuracy.high, distanceFilter: 4),
       ).listen((pos) {
         if (!mounted) return;
+        final me = LatLng(pos.latitude, pos.longitude);
         setState(() {
-          _me = LatLng(pos.latitude, pos.longitude);
+          _me = me;
           _myHeading = pos.heading;
         });
+        NavJournal.instance.feed(me);
         CompassService.instance.setGpsCourse(pos.heading, pos.speed);
         if (_follow && _me != null) {
           try { _map.move(_me!, _map.camera.zoom); } catch (_) {}
@@ -377,7 +383,7 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final svc = CompassService.instance;
     return AnimatedBuilder(
-      animation: Listenable.merge([svc, _pulse]),
+      animation: Listenable.merge([svc, _pulse, NavJournal.instance]),
       builder: (context, _) {
         final auto = svc.autoOrient;
         return Stack(children: [
@@ -405,6 +411,7 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
                 tileProvider: _tiles,
                 maxNativeZoom: 19,
               ),
+              ...NavJournal.instance.layers(_rot.value, _pulse.value),
               if (_route.isNotEmpty)
                 PolylineLayer(polylines: [
                   Polyline(points: _route,
@@ -474,6 +481,16 @@ class _NaviPageState extends State<NaviPage> with TickerProviderStateMixin {
                 _roundBtn(_follow ? Icons.gps_fixed_rounded : Icons.my_location_rounded,
                     'Где я', _recenter,
                     accent: _follow ? const Color(0xFF3FA85F) : null),
+                const SizedBox(height: 10),
+                NavSideTools(
+                  myPosition: () => _me,
+                  mapCenter: () {
+                    try { return _map.camera.center; } catch (_) { return _kaluga; }
+                  },
+                  onFocus: (p) {
+                    try { _map.move(p, 16); } catch (_) {}
+                  },
+                ),
               ])),
           if (_route.isNotEmpty)
             Positioned(left: 0, right: 0, bottom: 0, child: _routeInfo()),

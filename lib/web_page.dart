@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -139,6 +140,85 @@ class _WebPageState extends State<WebPage> {
   late final WebViewController c;
   double p = 0;
   bool _overlay = false;
+  bool _failed = false;
+  String _status = 'Подключение';
+  int _ticks = 0;
+  Timer? _poll;
+  Timer? _guard;
+
+  static const _detectJs = r'''
+(function(){
+  var pay = document.getElementById('tk-pay');
+  if (pay && pay.querySelector('form, input, button, iframe')) return 'ready';
+  var inp = document.querySelector('form input[type="text"], form input[type="tel"], form input[type="number"], input[name*="card" i], input[placeholder*="карт" i]');
+  if (inp) return 'ready';
+  var ifr = document.querySelector('iframe[src*="pay"], iframe[src*="widget"], iframe[src*="t-karta"]');
+  if (ifr) return 'ready';
+  var btn = document.querySelectorAll('button, input[type="submit"]');
+  for (var i=0;i<btn.length;i++){
+    var t = (btn[i].textContent || btn[i].value || '').toLowerCase();
+    if (t.indexOf('проверить') >= 0 || t.indexOf('пополнить') >= 0) return 'ready';
+  }
+  return 'wait';
+})()
+''';
+
+  static const _earlyJs = r'''
+(function(){
+  if (document.getElementById('fb-hide')) return 'ok';
+  var s = document.createElement('style');
+  s.id = 'fb-hide';
+  s.textContent = 'header,footer,nav,.navbar,.menu,.breadcrumb,.cookie-banner,.loader-wrapper,aside{display:none!important}';
+  (document.head || document.documentElement).appendChild(s);
+  return 'ok';
+})()
+''';
+
+  static const _cleanJs = r'''
+(function(){
+  function pick(){
+    var pay = document.getElementById('tk-pay');
+    if (pay && pay.querySelector('form, input, button, iframe')) return pay;
+    var inp = document.querySelector('form input[type="text"], form input[type="tel"], form input[type="number"], input[name*="card" i], input[placeholder*="карт" i]');
+    if (inp) return inp.closest('form') || inp.parentElement || inp;
+    var ifr = document.querySelector('iframe[src*="pay"], iframe[src*="widget"], iframe[src*="t-karta"]');
+    if (ifr) return ifr;
+    var btn = document.querySelectorAll('button, input[type="submit"]');
+    for (var i=0;i<btn.length;i++){
+      var t = (btn[i].textContent || btn[i].value || '').toLowerCase();
+      if (t.indexOf('проверить') >= 0 || t.indexOf('пополнить') >= 0) {
+        return btn[i].closest('form') || btn[i].parentElement || btn[i];
+      }
+    }
+    return null;
+  }
+  var m = pick();
+  var b = document.getElementById('cookieAcceptBtn');
+  if (b) b.click();
+  document.querySelectorAll('[class*="cookie"]').forEach(function(e){
+    if (!m || !e.contains(m)) e.style.setProperty('display','none','important');
+  });
+  ['header','footer','nav','.navbar','.menu','.breadcrumb','.loader-wrapper','aside','h1','h5']
+    .forEach(function(s){
+      document.querySelectorAll(s).forEach(function(e){
+        if (!m || !e.contains(m)) e.remove();
+      });
+    });
+  if (!m) return 'noclean';
+  var node = m;
+  while (node && node !== document.body) {
+    var par = node.parentElement;
+    if (par) {
+      for (var i=0;i<par.children.length;i++){
+        var sib = par.children[i];
+        if (sib !== node && !sib.contains(m)) sib.style.setProperty('display','none','important');
+      }
+    }
+    node = par;
+  }
+  return 'cleaned';
+})()
+''';
 
   @override
   void initState() {
@@ -149,15 +229,25 @@ class _WebPageState extends State<WebPage> {
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (v) { if (mounted) setState(() => p = v / 100); },
-        onPageStarted: (_) => WebNav.instance.refresh(),
+        onPageStarted: (_) async {
+          WebNav.instance.refresh();
+          if (widget.args.clean) {
+            try { await c.runJavaScript(_earlyJs); } catch (_) {}
+          }
+        },
         onPageFinished: (_) async {
           if (widget.args.bannerOnly || widget.args.geoOnly) {
-            try {
-              await c.runJavaScript(_mapJs(widget.args.geoOnly));
-            } catch (_) {}
+            try { await c.runJavaScript(_mapJs(widget.args.geoOnly)); } catch (_) {}
           }
-          if (widget.args.clean) _waitForm();
+          if (widget.args.clean) {
+            try { await c.runJavaScript(_earlyJs); } catch (_) {}
+          }
           WebNav.instance.refresh();
+        },
+        onWebResourceError: (e) {
+          if ((e.isForMainFrame ?? false) && _overlay) {
+            _fail('Страница не открылась (код ${e.errorCode})');
+          }
         },
         onNavigationRequest: (req) async {
           final u = req.url;
@@ -172,54 +262,89 @@ class _WebPageState extends State<WebPage> {
       ))
       ..loadRequest(Uri.parse(widget.args.url));
     WebNav.instance.attach(c);
+    _startWatch();
   }
 
-  Future<void> _waitForm({int attempt = 0}) async {
-    if (!mounted) return;
-    if (attempt > 64) {
-      if (mounted) setState(() => _overlay = false);
-      return;
+  void _startWatch() {
+    _poll?.cancel();
+    _guard?.cancel();
+    _ticks = 0;
+    _failed = false;
+    _status = 'Подключение';
+    if (!widget.args.waitReady) return;
+    if (mounted) setState(() => _overlay = true);
+    if (widget.args.clean) {
+      _poll = Timer.periodic(const Duration(milliseconds: 600), (_) => _tick());
     }
+    _guard = Timer(const Duration(seconds: 45), () {
+      if (_overlay && mounted) _fail('Сайт не отвечает слишком долго');
+    });
+  }
+
+  void _stopWatch() {
+    _poll?.cancel();
+    _poll = null;
+    _guard?.cancel();
+    _guard = null;
+  }
+
+  void _finish() {
+    _stopWatch();
+    if (!mounted) return;
+    setState(() {
+      _overlay = false;
+      _failed = false;
+    });
+  }
+
+  void _fail(String msg) {
+    _stopWatch();
+    if (!mounted) return;
+    setState(() {
+      _failed = true;
+      _status = msg;
+      _overlay = true;
+    });
+  }
+
+  Future<void> _tick() async {
+    if (!mounted || _failed || !_overlay) return;
+    _ticks++;
+    if (_ticks == 12) setState(() => _status = 'Ждём форму оплаты…');
+    if (_ticks == 30) setState(() => _status = 'Форма грузится медленно…');
     try {
-      final has = await c.runJavaScriptReturningResult('''
-        (function(){
-          var pay = document.getElementById('tk-pay');
-          return !!(pay && pay.querySelector('form, input, button'));
-        })()
-      ''');
-      if (has == true) {
-        await c.runJavaScript('''
-          var b = document.getElementById('cookieAcceptBtn');
-          if (b) b.click();
-          ['header','footer','.loader-wrapper','.cookie-banner','.breadcrumb',
-           'nav','.navbar','.menu','aside','h1','h5'].forEach(function(s){
-            document.querySelectorAll(s).forEach(function(e){ e.remove(); });
-          });
-          var pay = document.getElementById('tk-pay');
-          if (pay) {
-            var node = pay;
-            while (node && node !== document.body) {
-              var parent = node.parentElement;
-              if (parent) {
-                for (var i = 0; i < parent.children.length; i++) {
-                  if (parent.children[i] !== node) parent.children[i].style.display='none';
-                }
-              }
-              node = parent;
-            }
-          }
-        ''');
+      final r = await c.runJavaScriptReturningResult(_detectJs);
+      final s = r.toString().replaceAll('"', '').trim().toLowerCase();
+      if (s == 'ready') {
+        _poll?.cancel();
+        _poll = null;
+        try { await c.runJavaScript(_cleanJs); } catch (_) {}
+        if (!mounted) return;
+        setState(() => _status = 'Форма готова');
         await Future.delayed(const Duration(seconds: 2));
-        if (mounted) setState(() => _overlay = false);
+        _finish();
         return;
       }
     } catch (_) {}
-    Future.delayed(const Duration(milliseconds: 500),
-        () => _waitForm(attempt: attempt + 1));
+    if (_ticks >= 45 && mounted) {
+      _fail('Форма не найдена — вёрстка сайта изменилась');
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _failed = false;
+      _status = 'Подключение';
+      _ticks = 0;
+    });
+    _startWatch();
+    await c.loadRequest(Uri.parse(widget.args.url));
   }
 
   @override
   void dispose() {
+    _stopWatch();
     WebNav.instance.detach(c);
     super.dispose();
   }
@@ -239,7 +364,7 @@ class _WebPageState extends State<WebPage> {
           child: Row(children: [
             Expanded(child: Text(widget.args.title, style: context.t.titleMedium,
                 maxLines: 1, overflow: TextOverflow.ellipsis)),
-            IconButton(tooltip: 'Обновить', onPressed: () => c.reload(),
+            IconButton(tooltip: 'Обновить', onPressed: _reload,
                 icon: const Icon(Icons.refresh_rounded)),
             IconButton(tooltip: 'Открыть в браузере',
                 onPressed: () => launchUrl(Uri.parse(widget.args.url),
@@ -257,11 +382,66 @@ class _WebPageState extends State<WebPage> {
   Widget _cover(BuildContext context) => Positioned.fill(
         child: Container(
           color: context.c.surface,
-          child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text('Подключение', style: context.t.bodySmall),
-          ])),
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (_failed)
+                Container(
+                  width: 58, height: 58,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: context.c.error.withOpacity(.12),
+                    border: Border.all(color: context.c.error.withOpacity(.5), width: 1.5),
+                  ),
+                  child: Icon(Icons.wifi_tethering_error_rounded,
+                      size: 26, color: context.c.error),
+                )
+              else
+                const SizedBox(width: 34, height: 34,
+                    child: CircularProgressIndicator(strokeWidth: 3)),
+              const SizedBox(height: 16),
+              Text(_status,
+                  textAlign: TextAlign.center,
+                  style: _failed ? context.t.titleMedium : context.t.bodyMedium),
+              const SizedBox(height: 6),
+              Text(_failed
+                  ? 'Можно повторить, открыть сайт в браузере или посмотреть страницу как есть.'
+                  : '${(_ticks * 0.6).round()} с',
+                  textAlign: TextAlign.center,
+                  style: context.t.bodySmall),
+              const SizedBox(height: 18),
+              if (_failed) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _reload,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Повторить'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, alignment: WrapAlignment.center, children: [
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(Uri.parse(widget.args.url),
+                        mode: LaunchMode.externalApplication),
+                    icon: const Icon(Icons.open_in_browser_rounded, size: 17),
+                    label: const Text('В браузере'),
+                  ),
+                  TextButton(onPressed: _finish, child: const Text('Показать страницу')),
+                ]),
+              ] else if (_ticks >= 12) ...[
+                Wrap(spacing: 8, alignment: WrapAlignment.center, children: [
+                  OutlinedButton(onPressed: _finish,
+                      child: const Text('Открыть без ожидания')),
+                  TextButton(
+                    onPressed: () => launchUrl(Uri.parse(widget.args.url),
+                        mode: LaunchMode.externalApplication),
+                    child: const Text('В браузере'),
+                  ),
+                ]),
+              ],
+            ]),
+          ),
         ),
       );
 }

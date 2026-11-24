@@ -302,8 +302,6 @@ class _TrafficMapPageState extends State<TrafficMapPage>
       ])),
       if (sel != null)
         Positioned(left: 0, right: 0, bottom: 0, child: _detail(sel)),
-      if (_feed.vehicles.isEmpty)
-        Positioned(left: 20, right: 76, top: 90, child: _empty()),
       Positioned(left: 10, bottom: 4,
           child: Text('© OpenStreetMap · данные Яндекс.Транспорт',
               style: TextStyle(fontSize: 10, color: context.c.onSurfaceVariant))),
@@ -580,29 +578,7 @@ class _TrafficMapPageState extends State<TrafficMapPage>
     );
   }
 
-  Widget _empty() => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: context.c.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: context.c.outlineVariant),
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Ждём машины с линии', style: context.t.titleMedium),
-          const SizedBox(height: 6),
-          Text(_feed.error ?? 'Источник подключается, первые данные обычно приходят за 10–20 секунд.',
-              style: context.t.bodySmall),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: () => _feed.refreshNow(),
-            icon: const Icon(Icons.refresh_rounded, size: 17),
-            label: const Text('Обновить'),
-          ),
-        ]),
-      );
-
-  Widget _round(IconData i, String tip, VoidCallback onTap,
+ Widget _round(IconData i, String tip, VoidCallback onTap,
       {Color? accent, bool busy = false}) => Tooltip(
         message: tip,
         child: Material(color: context.c.surface, shape: const CircleBorder(),

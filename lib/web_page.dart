@@ -140,8 +140,6 @@ class _WebPageState extends State<WebPage> {
   late final WebViewController c;
   double p = 0;
   bool _overlay = false;
-  bool _failed = false;
-  String _status = 'Подключение';
   int _ticks = 0;
   Timer? _poll;
   Timer? _guard;
@@ -245,9 +243,7 @@ class _WebPageState extends State<WebPage> {
           WebNav.instance.refresh();
         },
         onWebResourceError: (e) {
-          if ((e.isForMainFrame ?? false) && _overlay) {
-            _fail('Страница не открылась (код ${e.errorCode})');
-          }
+          if (e.isForMainFrame ?? false) _finish();
         },
         onNavigationRequest: (req) async {
           final u = req.url;
@@ -269,16 +265,12 @@ class _WebPageState extends State<WebPage> {
     _poll?.cancel();
     _guard?.cancel();
     _ticks = 0;
-    _failed = false;
-    _status = 'Подключение';
     if (!widget.args.waitReady) return;
     if (mounted) setState(() => _overlay = true);
     if (widget.args.clean) {
-      _poll = Timer.periodic(const Duration(milliseconds: 600), (_) => _tick());
+      _poll = Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
     }
-    _guard = Timer(const Duration(seconds: 45), () {
-      if (_overlay && mounted) _fail('Сайт не отвечает слишком долго');
-    });
+    _guard = Timer(const Duration(seconds: 60), _finish);
   }
 
   void _stopWatch() {
@@ -291,27 +283,12 @@ class _WebPageState extends State<WebPage> {
   void _finish() {
     _stopWatch();
     if (!mounted) return;
-    setState(() {
-      _overlay = false;
-      _failed = false;
-    });
-  }
-
-  void _fail(String msg) {
-    _stopWatch();
-    if (!mounted) return;
-    setState(() {
-      _failed = true;
-      _status = msg;
-      _overlay = true;
-    });
+    setState(() => _overlay = false);
   }
 
   Future<void> _tick() async {
-    if (!mounted || _failed || !_overlay) return;
+    if (!mounted || !_overlay) return;
     _ticks++;
-    if (_ticks == 12) setState(() => _status = 'Ждём форму оплаты…');
-    if (_ticks == 30) setState(() => _status = 'Форма грузится медленно…');
     try {
       final r = await c.runJavaScriptReturningResult(_detectJs);
       final s = r.toString().replaceAll('"', '').trim().toLowerCase();
@@ -319,25 +296,15 @@ class _WebPageState extends State<WebPage> {
         _poll?.cancel();
         _poll = null;
         try { await c.runJavaScript(_cleanJs); } catch (_) {}
-        if (!mounted) return;
-        setState(() => _status = 'Форма готова');
         await Future.delayed(const Duration(seconds: 2));
         _finish();
         return;
       }
     } catch (_) {}
-    if (_ticks >= 45 && mounted) {
-      _fail('Форма не найдена — вёрстка сайта изменилась');
-    }
-    if (mounted) setState(() {});
+    if (_ticks >= 110) _finish();
   }
 
   Future<void> _reload() async {
-    setState(() {
-      _failed = false;
-      _status = 'Подключение';
-      _ticks = 0;
-    });
     _startWatch();
     await c.loadRequest(Uri.parse(widget.args.url));
   }
@@ -382,64 +349,15 @@ class _WebPageState extends State<WebPage> {
   Widget _cover(BuildContext context) => Positioned.fill(
         child: Container(
           color: context.c.surface,
-          padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              if (_failed)
-                Container(
-                  width: 58, height: 58,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: context.c.error.withOpacity(.12),
-                    border: Border.all(color: context.c.error.withOpacity(.5), width: 1.5),
-                  ),
-                  child: Icon(Icons.wifi_tethering_error_rounded,
-                      size: 26, color: context.c.error),
-                )
-              else
-                const SizedBox(width: 34, height: 34,
-                    child: CircularProgressIndicator(strokeWidth: 3)),
+              const SizedBox(
+                width: 34,
+                height: 34,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
               const SizedBox(height: 16),
-              Text(_status,
-                  textAlign: TextAlign.center,
-                  style: _failed ? context.t.titleMedium : context.t.bodyMedium),
-              const SizedBox(height: 6),
-              Text(_failed
-                  ? 'Можно повторить, открыть сайт в браузере или посмотреть страницу как есть.'
-                  : '${(_ticks * 0.6).round()} с',
-                  textAlign: TextAlign.center,
-                  style: context.t.bodySmall),
-              const SizedBox(height: 18),
-              if (_failed) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _reload,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Повторить'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, alignment: WrapAlignment.center, children: [
-                  OutlinedButton.icon(
-                    onPressed: () => launchUrl(Uri.parse(widget.args.url),
-                        mode: LaunchMode.externalApplication),
-                    icon: const Icon(Icons.open_in_browser_rounded, size: 17),
-                    label: const Text('В браузере'),
-                  ),
-                  TextButton(onPressed: _finish, child: const Text('Показать страницу')),
-                ]),
-              ] else if (_ticks >= 12) ...[
-                Wrap(spacing: 8, alignment: WrapAlignment.center, children: [
-                  OutlinedButton(onPressed: _finish,
-                      child: const Text('Открыть без ожидания')),
-                  TextButton(
-                    onPressed: () => launchUrl(Uri.parse(widget.args.url),
-                        mode: LaunchMode.externalApplication),
-                    child: const Text('В браузере'),
-                  ),
-                ]),
-              ],
+              Text('Подключение', style: context.t.bodySmall),
             ]),
           ),
         ),
